@@ -1,0 +1,258 @@
+# Nginx config generated from template:
+# Domain name: {{ conf.domain.domain_name }}
+# Origin:      {{ conf.domain.origin }}
+{% if nginx.user %}
+user {{ nginx.user }};
+{% endif %}
+worker_processes auto;
+pid {{ plat.pid }};
+
+events {
+    worker_connections 768;
+    # multi_accept on;
+}
+
+http {
+    # Json is king. Making it the default return type for all http responses.
+    default_type application/json;
+
+    # Proxy settings
+    proxy_cache_path /tmp/nginx levels=1:2 keys_zone=global_zone:10m inactive=60m;
+    proxy_cache_key "$scheme$request_method$host$request_uri";
+
+    ##
+    # Basic Settings
+    ##
+
+    map_hash_max_size 32768;
+    map_hash_bucket_size 256;
+
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    types_hash_max_size 2048;
+    # server_tokens off;
+
+    # server_names_hash_bucket_size 64;
+    # server_name_in_redirect off;
+
+    include {{ plat.etc }}/nginx/mime.types;
+
+
+    ##
+    # Logging Settings
+    ##
+    # Use special log log_format
+    log_format jsonlog '{'
+        '"timestamp": "$msec",'
+        '"remote_addr": "$remote_addr",'
+        '"tier": "{{ conf.tier.tier_name }}",'
+        '"hostname": "$hostname",'
+        '"kaleo_api_key": "$http_kaleo_api_key",'
+        '"server_name": "$server_name",'
+        '"host": "$host",'
+        '"request": "$request",'
+        '"request_length": "$request_length",'
+        '"response_code": $status,'
+        '"response_size": $body_bytes_sent,'
+        '"bytes_sent": $bytes_sent,'
+        '"request_time": $request_time,'
+        '"upstream_response_time": "$upstream_response_time",'
+        '"upstream_addr": "$upstream_addr",'
+        '"referer": "$http_referer",'
+        '"user_agent": "$http_user_agent",'
+        '"gzip_ratio": "$gzip_ratio",'
+        '"cache_status": "$upstream_cache_status"'
+        '}';
+
+    access_log {{ plat.log }}/nginx/access.log jsonlog;
+    error_log {{ plat.log }}/nginx/error.log;
+
+
+    ##
+    # Gzip Settings
+    ##
+    gzip on;
+    gzip_comp_level 2;
+    gzip_types application/json;
+    gzip_min_length 20;  # Change this to 0 to force gzip
+
+
+    ##
+    # Map tenant name to product:
+    ##
+    map $http_host $product_name {
+        default _unknown_tenant_name;
+        {% for tenant_name, product in tenants.items() %}
+        {{ tenant_name }}.*   {{ product.product_name }};
+        {%- endfor %}
+    }
+
+    # xxxxxxxxxx
+    map $http_drift_api_key $api_key {
+        default unknown;
+        ~^.*$ pass;
+    }
+
+    map $http_host $whitehosts {
+        default unknown;
+    }
+
+
+    # Set up connection and request rate limits
+    # "global" zone defines the total limits for the whole server.
+    # "per_client" defines the limit on a per client (or remote IP address).
+    # TODO: Figure out how these number make sense when there is more than one
+    # api-router running, and what happens when we scale out the services as well.
+    limit_req_zone api_router zone=global:10m rate=250r/s;
+    limit_req_zone $remote_addr zone=per_client:150m rate=50r/s;
+    limit_req_zone $remote_addr zone=per_client_kaleoweb:150m rate=25000r/s;
+
+
+
+    ##
+    # Redirect http to https.
+    # This requires appropriate configuration on the ELB:
+    # Incoming unencrypted requests on port 80 are forwarded to 8081.
+    # Incoming TLS requests on port 443 are forwarded to 8080.
+    ##
+    server {
+        listen       8081;
+        server_name api_router_redirect;
+        location /
+        {
+            rewrite     ^   https://$host:8080$request_uri? permanent;
+        }
+    }
+
+
+    # Example of 'routes' info:
+    # routes = [
+    #     "tier_name": "TIERNAME",
+    #     "deployable_name": "deployable",
+    #     "api": "deployapi",
+    #     "requires_api_key": True,
+    #     "targets": [{"name": "x", "private_ip_address": "1.2.3.4", "tags": {...}}]
+    # ]
+
+    ##
+    # API key rules
+    ##
+    map $request_uri $keyless_service {
+        default needs_key;
+
+        # The following paths are always keyless:
+        ~*^/api-router(|/.*)$ no_key;
+        /healthcheck no_key;
+
+        # Routes from config:
+        {%- for name, route in routes.items() %}
+        {%- if not route.requires_api_key %}
+        ~*^/{{ name }}(|/.*)$ no_key;
+        {%- endif %}
+        {%- endfor %}
+    }
+
+
+    ##
+    # The API router server
+    ##
+    server {
+        listen       8080;
+        server_name  api_router;
+
+        real_ip_header X-Forwarded-For;
+        set_real_ip_from 10.0.0.0/8;
+
+        # Apply both 'global' limit and 'per_client' limit to the whole server.
+        limit_req zone=global burst=250;
+        limit_req zone=per_client burst=250;
+
+        # TODO: Make sure this jives with both linux and osx
+        root /usr/local/share/nginx;
+
+        location /favicon.ico {
+            log_not_found off;
+            access_log off;
+                error_log off;
+        }
+
+        location /api-router {
+            index status.json;
+            #add_header 'Access-Control-Allow-Origin' '*';
+        }
+
+        location /healthcheck {
+            # For ELB health check
+            return 200 '{"status_code": 200, "message": "Healthy"}';
+        }
+
+        error_page 404 /errors/404;
+        location = /errors/404 {
+            return 404 '{"status_code": 404, "message": "Not Found"}\n';
+        }
+
+        ##
+        # API key rules
+        ##
+        if ($whitehosts != unknown) {
+            set $api_key $whitehosts;
+        }
+
+        if ($keyless_service != needs_key) {
+            set $api_key "keyless_service";
+        }
+
+        if ($api_key = unknown) {
+            return 403
+            '{"status_code": 403, "message": "Forbidden",
+            "error": {"code": "api_key_missing", "description": "API key is missing or unknown."}}\n';
+        }
+
+        ##
+        # Dynamic locations:
+        ##
+        {% for name, route in routes.items() %}
+        {% if route.targets %}
+        location /{{ route.api }} {
+            proxy_pass http://{{ name }}-servers/{{ route.api }};
+            proxy_http_version 1.1;
+
+            proxy_set_header  X-Script-Name       /{{ route.api }};
+            proxy_set_header  Upgrade             $http_upgrade;
+            proxy_set_header  Connection          "upgrade";
+            proxy_set_header  Host                $host;
+            proxy_set_header  X-Real-IP           $remote_addr;
+            proxy_set_header  X-Forwarded-For     $remote_addr;
+            proxy_set_header  X-Forwarded-Proto   https;
+            proxy_set_header  X-NginX-Proxy       true;
+        }
+        {% else %}
+        location /{{ route.api }} {
+            return 503 '{"status_code": 503, "message": "Service Unavailable."}';
+        }
+        {% endif %}
+        {% endfor %}
+
+    }
+
+    ##
+    # Upstream servers:
+    ##
+    {% for name, route in routes.items() %}
+    {% if route.targets %}
+    upstream {{ name }}-servers {
+        {%- for target in route.targets %}
+        server {{ target.private_ip_address}}:{{ target.tags['api-port']}};  # {{ target.comment }}
+        {%- endfor %}
+    }
+    {% endif %}
+    {% endfor %}
+
+
+    # RENDER STOPS HERE! maybe.. ----------------------------------------------------------------------
+    {% if False %}
+    {% endif %}
+}
+

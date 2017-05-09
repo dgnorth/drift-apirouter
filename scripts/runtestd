@@ -1,0 +1,29 @@
+#!/bin/bash
+# set cwd to the package folder
+cd "$(dirname "$0")"/../apirouter
+
+echo "Runtest Daemon running. Watching folder:"
+pwd
+
+while true
+do
+    timestamp1=`stat -f%c *.py *.jinja tests/*.py`
+    sleep 1
+    timestamp2=`stat -f%c *.py *.jinja tests/*.py`
+    if [ "$timestamp1" != "$timestamp2" ];
+    then
+        echo ">>>>>>>>>>> A file change detected in script folder. Running test..."
+        : > /usr/local/var/log/nginx/error.log
+        nose2
+
+        # See if anything is in the error log apart from the "process started" line and some deliberate
+        # errors from the unit test.
+        linecount=`cat /usr/local/var/log/nginx/error.log | grep -E -c -v "signal process started|/not/found"`
+        if [ "$linecount" != "0" ];
+        then
+            echo "error log file:"
+            cat /usr/local/var/log/nginx/error.log
+        fi
+        printf "<<<<<<<<<<< Test run done!\n\n"
+    fi
+done
