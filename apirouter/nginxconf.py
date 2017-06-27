@@ -68,6 +68,69 @@ def _prepare_info(tier_name):
         routes[deployable_name].setdefault('api', deployable_name)  # Makes it easier for the template code.
         routes[deployable_name]['targets'] = api_targets.get(deployable_name, [])
 
+
+    # Example of product and custom key:
+    '''
+    {
+        "api_key_name": "dg-superkaiju-1210a98c",
+        "create_date": "2017-01-17T11:11:55.099094Z",
+        "custom_data": "nonnib@directivegames.com",
+        "in_use": true,
+        "key_type": "product",
+        "product_name": "dg-superkaiju"
+    },
+
+    {
+        "api_key_name": "dg-nonnib-04ceccfb",
+        "create_date": "2017-01-18T14:52:41.331130Z",
+        "custom_data": "nonnib@directivegames.com",
+        "in_use": true,
+        "key_type": "custom",
+        "product_name": "dg-superkaiju"
+    }
+    '''
+
+    # Example of product key rules:
+    '''
+    product_name: dg-superkaiju
+    assignment_order: 0-6
+    is_active: true
+
+    rule_name          version_patterns  rule_type  status_code  ...
+    ------------------------------------------------------------------------------------------------
+    upgrade-client-1.6 ["1.6.0","1.6.2"] reject     404          response_body: {"action": "upgrade_client"}
+    downtime-message   []                reject     403          response_body: {"message": "The server is down"}
+**  redirect_to_test   ["0.0.1"]         redirect   (302)        tenant_name: dg-themachines-test
+    upgrade-client-old ["1.3.*","1.4."]   reject     404          response_body: {"action": "upgrade_client"}
+    pass               ["1.6.3","1.6.4"] pass
+    redirect-to-nonni  ["1.6.5"]         redirect                tenant_name: dg-nonnib-devnorth
+    reject             []                reject     403          response_body: {"message": "Bugger off!"},
+
+
+    inactive:
+    {
+        "assignment_order": 0,
+        "is_active": false,
+        "match_type": "partial",
+        "product_name": "dg-superkaiju",
+        "response_body": {
+            "action": "upgrade_client"
+        },
+        "rule_name": "upgrade-client-1.6",
+        "rule_type": "reject",
+        "status_code": 404,
+        "version_patterns": [
+            "1.6.0",
+            "1.6.1",
+            "1.6.2"
+        ]
+    },
+    '''
+    api_keys = {}
+    for api_key in ts.get_table('api-keys').find({'tier_name': tier_name}):
+        if api_key['in_use'] and api_key['key_type'] == 'custom':
+            api_keys[api_key['api_key_name']] = ''
+
     # This should come from the "new" nginx config table:
     nginx = {
         'userx': 'matti-staff',
@@ -177,6 +240,7 @@ def apply_nginx_config(nginx_config):
     if ret != 0:
         return ret
     ret = subprocess.call(['sudo', 'nginx', '-s', 'reload'])
+    import time; time.sleep(1)
     if ret != 0:
         return ret
 

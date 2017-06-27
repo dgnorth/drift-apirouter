@@ -46,7 +46,7 @@ class TestNginxConfig(unittest.TestCase):
         # get_api_targets() above). The second one has not target but is used to test keyless
         # api access.
         config_size = {
-            'num_org': 6152,
+            'num_org': 5,
             'num_tiers': 2,
             'num_deployables': 4,
             'num_products': 2,
@@ -62,50 +62,112 @@ class TestNginxConfig(unittest.TestCase):
 
         if 1:
             from driftconfig.relib import create_backend
+            from driftconfig.backends import ZipEncoded
 
             #t = time.time()
             #create_backend('file://~/.drift/testts').save_table_store(ts, run_integrity_check=False, file_format='json')
             #print "WRITING json", time.time() - t
 
             t = time.time()
-            create_backend('file://~/.drift/testts').save_table_store(ts, run_integrity_check=False, file_format='pickle')
+            backend = create_backend('file://~/.drift/testts')
+            for b in backend, ZipEncoded(backend):
+                b.save_table_store(ts, run_integrity_check=False, file_format='pickle')
+
             print "WRITING pickle", time.time() - t
 
-        tier_name = ts.get_table('tiers').find()[0]['tier_name']
-        api_1 = ts.get_table('deployables').find()[0]['deployable_name']
-        api_2 = ts.get_table('deployables').find()[1]['deployable_name']
+        # Extract names from config. This way there's no need to assume how the names are generated
+        # by create_test_domain() function.
+        cls.tier_name = ts.get_table('tiers').find()[0]['tier_name']
+        cls.api_1 = ts.get_table('deployables').find()[0]['deployable_name']
+        cls.api_2 = ts.get_table('deployables').find()[1]['deployable_name']
+        cls.product_name = ts.get_table('products').find()[0]['product_name']
+        cls.tenant_name_1 = ts.get_table('tenant-names').find()[0]['tenant_name']
+        cls.tenant_name_2 = ts.get_table('tenant-names').find()[1]['tenant_name']
 
+        # Add api router specific config data:
+
+        # Generate 'routing' data
         routing = ts.get_table('routing')
         routing.add({
-            'tier_name': tier_name,
-            'deployable_name': api_1,
+            'tier_name': cls.tier_name,
+            'deployable_name': cls.api_1,
             'requires_api_key': True,
         })
 
         routing.add({
-            'tier_name': tier_name,
-            'deployable_name': api_2,
+            'tier_name': cls.tier_name,
+            'deployable_name': cls.api_2,
             'requires_api_key': False,
         })
 
-        nginx_config = nginxconf.generate_nginx_config(tier_name)
+        # Generate 'api-keys' and 'api-key-rules' data
+        cls.product_api_key = cls.product_name + '-99999999'
+        cls.custom_api_key = 'nginx-unittester'
+
+        api_keys = ts.get_table('api-keys')
+        api_keys.add({
+            'api_key_name': cls.product_api_key,
+            'product_name': cls.product_name,
+            'key_type': 'product',
+        })
+        api_keys.add({
+            'api_key_name': cls.custom_api_key,
+            'product_name': cls.product_name,
+            'key_type': 'custom',
+        })
+
+        # Make a few rules to test various cases
+        rules = [
+            ('upgrade-client-1.6', ["1.6.0", "1.6.2"], 'reject', [404, {"action": "upgrade_client"}]),
+            ('downtime-message', [], 'reject', [404, {"action": "upgrade_client"}]),
+            ('upgrade-client-1.6', ["1.6.0", "1.6.2"], 'reject', [404, {"action": "upgrade_client"}]),
+            ('upgrade-client-1.6', ["1.6.0", "1.6.2"], 'reject', [404, {"action": "upgrade_client"}]),
+            ('redirect-to-ohmnom', ["1.6.5"], 'redirect', cls.tenant_name_1),
+        ]
+
+        api_key_rules = ts.get_table('api-key-rules')
+
+        for i, (rule_name, version_pattern, rule_type, custom) in enumerate(rules):
+            row = api_key_rules.add({
+                'product_name': cls.product_name,
+                'rule_name': rule_name,
+                'assignment_order': i,
+                'version_patterns': version_pattern,
+                'rule_type': rule_type,
+            })
+            if rule_type == 'reject':
+                row['reject'] = {'status_code': custom[0], 'response_body': custom[1]}
+            elif rule_type == 'redirect':
+                row['redirect'] = {'tenant_name': custom}
+
+        nginx_config = nginxconf.generate_nginx_config(cls.tier_name)
         nginxconf.apply_nginx_config(nginx_config)
 
         cls.ts = ts
-        cls.keyless_api = api_2
+        cls.key_api = cls.api_1
+        cls.keyless_api = cls.api_2
 
     @classmethod
     def tearDownClass(cls):
         for patcher in cls.patchers:
             patcher.stop()
 
-    def get(self, uri, **kw):
+    def get(self, uri, api_key=None, **kw):
         headers = kw.setdefault('headers', {})
+        if api_key == 'product':
+            headers['drift-api-key'] = self.product_api_key
+        elif api_key == 'custom':
+            headers['drift-api-key'] = self.custom_api_key
+
         headers.setdefault('Accept', 'application/json')
         url = 'http://{}:{}{}'.format(HOST, PORT, uri)
         ret = requests.get(url, **kw)
-        self.assertEqual(ret.headers['Content-type'], headers['Accept'])
+        self.assertEqual(ret.headers.get('Content-Type'), headers['Accept'])
         return ret
+
+    def kget(self, *args, **kw):
+        """Same as get() but with an api key."""
+        return self.get(*args, api_key='custom', **kw)
 
     def test_https_redirect(self):
         # http requests are redirected to https
@@ -137,9 +199,18 @@ class TestNginxConfig(unittest.TestCase):
         ret.json()  # Make sure it's a json response.
 
     def test_keyless_api(self):
+        # This route exists, but with no targets. We can test keyless access by simply
+        # accessing this endpoint and expect the "No targets registered" error.
         ret = self.get('/' + self.keyless_api)
         self.assertEqual(ret.status_code, httplib.SERVICE_UNAVAILABLE)  # 503
-        ret.json()
+        self.assertIn("No targets registered", ret.json()['message'])
+
+        # To assert the opposite works - a targetless endpoint but one which requires a key -
+        # we try to access the endpoint that requires a key and expect the same error.
+        ret = self.kget('/' + self.key_api)
+        self.assertEqual(ret.status_code, httplib.SERVICE_UNAVAILABLE)  # 503
+        self.assertIn("No targets registered", ret.json()['message'])
+
 
 
 if __name__ == '__main__':

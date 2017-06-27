@@ -49,7 +49,7 @@ http {
         '"remote_addr": "$remote_addr",'
         '"tier": "{{ conf.tier.tier_name }}",'
         '"hostname": "$hostname",'
-        '"kaleo_api_key": "$http_kaleo_api_key",'
+        '"drift_api_key": "$http_drift_api_key",'
         '"server_name": "$server_name",'
         '"host": "$host",'
         '"request": "$request",'
@@ -83,6 +83,7 @@ http {
     # Map tenant name to product:
     ##
     map $http_host $product_name {
+        hostnames;  # Indicates that source values can be hostnames with a prefix or suffix mask
         default _unknown_tenant_name;
         {% for tenant_name, product in tenants.items() %}
         {{ tenant_name }}.*   {{ product.product_name }};
@@ -107,7 +108,6 @@ http {
     # api-router running, and what happens when we scale out the services as well.
     limit_req_zone api_router zone=global:10m rate=250r/s;
     limit_req_zone $remote_addr zone=per_client:150m rate=50r/s;
-    limit_req_zone $remote_addr zone=per_client_kaleoweb:150m rate=25000r/s;
 
 
 
@@ -172,11 +172,45 @@ http {
         # TODO: Make sure this jives with both linux and osx
         root /usr/local/share/nginx;
 
+        # return 201 '{"hello": "there"}';
+        # return 202 '{"hello": "there"}';
+        # return 203 '{"hello": "there"}';
+
         location /favicon.ico {
             log_not_found off;
             access_log off;
                 error_log off;
         }
+
+        ##return 200 '{"product": "$product_name", "api_key", "$api_key",'
+
+        location /api-router/request {
+            return 200 '{
+                "product": "$product_name",
+                "api_key", "$api_key",
+                "timestamp": "$msec",
+                "remote_addr": "$remote_addr",
+                "tier": "{{ conf.tier.tier_name }}",
+                "hostname": "$hostname",
+                "drift_api_key": "$http_drift_api_key",
+                "server_name": "$server_name",
+                "host": "$host",
+                "request": "$request",
+                "request_length": "$request_length",
+                "response_code": $status,
+                "response_size": $body_bytes_sent,
+                "bytes_sent": $bytes_sent,
+                "request_time": $request_time,
+                "upstream_response_time": "$upstream_response_time",
+                "upstream_addr": "$upstream_addr",
+                "referer": "$http_referer",
+                "user_agent": "$http_user_agent",
+                "gzip_ratio": "$gzip_ratio",
+                "cache_status": "$upstream_cache_status"
+                }';
+
+        }
+
 
         location /api-router {
             index status.json;
@@ -230,7 +264,7 @@ http {
         }
         {% else %}
         location /{{ route.api }} {
-            return 503 '{"status_code": 503, "message": "Service Unavailable."}';
+            return 503 '{"status_code": 503, "message": "Service Unavailable. No targets registered."}';
         }
         {% endif %}
         {% endfor %}
