@@ -12,7 +12,7 @@ do
     timestamp2=`stat -f%c *.py *.jinja tests/*.py`
     if [ "$timestamp1" != "$timestamp2" ];
     then
-        echo ">>>>>>>>>>> A file change detected in script folder. Running test..."
+        printf ">>>>>>>>>>>\n A file change detected in script folder. Running test..."
         : > /usr/local/var/log/nginx/error.log
         nose2
 
@@ -24,6 +24,6 @@ do
             echo "error log file:"
             cat /usr/local/var/log/nginx/error.log
         fi
-        printf "<<<<<<<<<<< Test run done!\n\n"
+        printf "Test run done!\n<<<<<<<<<<<\n\n"
     fi
 done

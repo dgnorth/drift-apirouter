@@ -16,10 +16,6 @@ http {
     # Json is king. Making it the default return type for all http responses.
     default_type application/json;
 
-    # Proxy settings
-    proxy_cache_path /tmp/nginx levels=1:2 keys_zone=global_zone:10m inactive=60m;
-    proxy_cache_key "$scheme$request_method$host$request_uri";
-
     ##
     # Basic Settings
     ##
@@ -90,6 +86,11 @@ http {
         {%- endfor %}
     }
 
+    # Get tenant agnostic host
+    map $http_host $host_domain {
+         ~^(?<tenant>[^.]*)\.(?<domain>.*)$ $domain;
+    }
+
     # xxxxxxxxxx
     map $http_drift_api_key $api_key {
         default unknown;
@@ -139,17 +140,17 @@ http {
     ##
     # API key rules
     ##
-    map $request_uri $keyless_service {
-        default needs_key;
+    map $request_uri $requires_api_key {
+        default "true";
 
         # The following paths are always keyless:
-        ~*^/api-router(|/.*)$ no_key;
-        /healthcheck no_key;
+        ~*^/api-router(|/.*)$ "false";
+        /healthcheck "false";
 
         # Routes from config:
         {%- for name, route in routes.items() %}
         {%- if not route.requires_api_key %}
-        ~*^/{{ name }}(|/.*)$ no_key;
+        ~*^/{{ name }}(|/.*)$ "false";
         {%- endif %}
         {%- endfor %}
     }
@@ -186,15 +187,21 @@ http {
 
         location /api-router/request {
             return 200 '{
-                "product": "$product_name",
-                "api_key", "$api_key",
-                "timestamp": "$msec",
-                "remote_addr": "$remote_addr",
                 "tier": "{{ conf.tier.tier_name }}",
-                "hostname": "$hostname",
+                "product": "$product_name",
+                "api_key": "$api_key",
+                "requires_api_key": "$requires_api_key",
                 "drift_api_key": "$http_drift_api_key",
+                "whitehosts": "$whitehosts",
+                "host_domain": "$host_domain",
+
                 "server_name": "$server_name",
+                "remote_addr": "$remote_addr",
+                "proxy_add_x_forwarded_for": "$proxy_add_x_forwarded_for",
+                "hostname": "$hostname",
+                "http_host": "$http_host",
                 "host": "$host",
+                "timestamp": "$msec",
                 "request": "$request",
                 "request_length": "$request_length",
                 "response_code": $status,
@@ -206,8 +213,20 @@ http {
                 "referer": "$http_referer",
                 "user_agent": "$http_user_agent",
                 "gzip_ratio": "$gzip_ratio",
-                "cache_status": "$upstream_cache_status"
-                }';
+                "cache_status": "$upstream_cache_status",
+
+                "request_headers":
+                {
+                    "Accept": "$http_accept",
+                    "Accept-Encoding": "$http_accept_encoding",
+                    "Accept-Language": "$http_accept_language",
+                    "Cache-Control": "$http_cache_control",
+                    "Connection": "$http_connection",
+                    "Host": "$http_host",
+                    "Upgrade-Insecure-Requests": "$http_insecure_requests",
+                    "User-Agent": "$http_user_agent"
+                }
+            }';
 
         }
 
@@ -225,23 +244,6 @@ http {
         error_page 404 /errors/404;
         location = /errors/404 {
             return 404 '{"status_code": 404, "message": "Not Found"}\n';
-        }
-
-        ##
-        # API key rules
-        ##
-        if ($whitehosts != unknown) {
-            set $api_key $whitehosts;
-        }
-
-        if ($keyless_service != needs_key) {
-            set $api_key "keyless_service";
-        }
-
-        if ($api_key = unknown) {
-            return 403
-            '{"status_code": 403, "message": "Forbidden",
-            "error": {"code": "api_key_missing", "description": "API key is missing or unknown."}}\n';
         }
 
         ##
@@ -268,6 +270,73 @@ http {
         }
         {% endif %}
         {% endfor %}
+
+        # Rules for API product keys and versions
+        # If a 'location' is exempt from all checks, it must set $api_check to "pass".
+
+
+        # if ($api_key = unknown) {
+        #     return 403
+        #     '{"status_code": 403, "message": "Forbidden",
+        #     "error": {"code": "api_key_missing", "description": "API key is missing or unknown."}}\n';
+        # }
+
+        # API product key check
+        set $drift_api_key $http_drift_api_key;
+
+        if ($drift_api_key ~ "^acme2-prod1-99999999.*$") {
+            set $product_key_check "pass";
+        }
+
+
+        # API key custom rules
+        set $product_and_key "${product_name}:${drift_api_key}";
+
+
+        # rule: ('upgrade-client-1.6', ["1.6.0", "1.6.2"], 'reject', [404, {"action": "upgrade_client"}]),
+        # Note: Escape dots in the version
+
+        # Rules for product "acme2-prod1" -------------------------------------
+
+        # Rule: acme2-prod1:upgrade-client-1.6
+        if ($product_and_key ~ "^acme2-prod1:acme2-prod1-99999999:1\.6\.0$") {
+            return 404 '{"action": "upgrade_client"}\n';
+        }
+        if ($product_and_key ~ "^acme2-prod1:acme2-prod1-99999999:1\.6\.2$") {
+            return 404 '{"action": "upgrade_client"}\n';
+        }
+
+        # Rule: acme2-prod1:redirect-to-ohmnom
+        if ($product_and_key ~ "^acme2-prod1:acme2-prod1-99999999:1\.6\.5$") {
+            return 302 "${scheme}://acme2-prod1-test0.${host_domain}${request_uri}";
+        }
+
+        # Rule: acme2-prod1:always-pass
+        if ($product_and_key ~ "^acme2-prod1:acme2-prod1-99999999:1\.6\.6$") {
+            set $product_and_key "pass";
+        }
+
+        # Rule: acme2-prod1:downtime-message
+        if ($product_and_key ~ "^acme2-prod1:acme2-prod1-99999999.*$") {
+            return 503 '{"message": "The server is down for maintenance."}\n';
+        }
+
+
+        # Rule terminator.
+        set $key_and_rule_check "${product_key_check}:${product_and_key}";
+
+        if ($requires_api_key = "false") {
+            set $key_and_rule_check "pass:pass";
+        }
+
+        if ($key_and_rule_check != "pass:pass") {
+            return 403
+            '{"status_code": 403, "message": "Forbidden",
+            "error": {"code": "api_key_missing", "description": "API key is missing or unknown."}}\n';
+        }
+
+
+
 
     }
 

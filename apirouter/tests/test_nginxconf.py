@@ -1,19 +1,21 @@
 # -*- coding: utf-8 -*-
 import time
 import unittest
-import json
 import requests
-import logging
 import httplib
 import mock
 
-from driftconfig.testhelpers import create_test_domain, TIER_NAME
+from driftconfig.testhelpers import create_test_domain
 
 
 from apirouter import nginxconf
 
+# Note: For OSX, install nginx like this:
+# brew install nginx-full --with-realip --with-headers-more-module
+
 
 HOST = 'localhost'
+HTTP_HOST = 'something.com'
 PORT = 8080         # todo: do not hardcode, get this from nginx config
 REDIR_PORT = PORT + 1
 
@@ -58,15 +60,19 @@ class TestNginxConfig(unittest.TestCase):
 
         t = time.time()
         ts = create_test_domain(config_size)
-        print "CREATING TEST CONFIG", time.time() - t
+        cls.ts = ts
 
-        if 1:
+        t = time.time() - t
+        if t > 0.100:
+            print "Warning: create_test_domain() took %.1f seconds." % t
+
+        if 0:
             from driftconfig.relib import create_backend
             from driftconfig.backends import ZipEncoded
 
-            #t = time.time()
-            #create_backend('file://~/.drift/testts').save_table_store(ts, run_integrity_check=False, file_format='json')
-            #print "WRITING json", time.time() - t
+            # t = time.time()
+            # create_backend('file://~/.drift/testts').save_table_store(ts, run_integrity_check=False, file_format='json')
+            # print "WRITING json", time.time() - t
 
             t = time.time()
             backend = create_backend('file://~/.drift/testts')
@@ -81,8 +87,8 @@ class TestNginxConfig(unittest.TestCase):
         cls.api_1 = ts.get_table('deployables').find()[0]['deployable_name']
         cls.api_2 = ts.get_table('deployables').find()[1]['deployable_name']
         cls.product_name = ts.get_table('products').find()[0]['product_name']
-        cls.tenant_name_1 = ts.get_table('tenant-names').find()[0]['tenant_name']
-        cls.tenant_name_2 = ts.get_table('tenant-names').find()[1]['tenant_name']
+        cls.tenant_name_1 = ts.get_table('tenant-names').find({'product_name': cls.product_name})[0]['tenant_name']
+        cls.tenant_name_2 = ts.get_table('tenant-names').find({'product_name': cls.product_name})[1]['tenant_name']
 
         # Add api router specific config data:
 
@@ -116,53 +122,51 @@ class TestNginxConfig(unittest.TestCase):
             'key_type': 'custom',
         })
 
-        # Make a few rules to test various cases
-        rules = [
-            ('upgrade-client-1.6', ["1.6.0", "1.6.2"], 'reject', [404, {"action": "upgrade_client"}]),
-            ('downtime-message', [], 'reject', [404, {"action": "upgrade_client"}]),
-            ('upgrade-client-1.6', ["1.6.0", "1.6.2"], 'reject', [404, {"action": "upgrade_client"}]),
-            ('upgrade-client-1.6', ["1.6.0", "1.6.2"], 'reject', [404, {"action": "upgrade_client"}]),
-            ('redirect-to-ohmnom', ["1.6.5"], 'redirect', cls.tenant_name_1),
-        ]
-
-        api_key_rules = ts.get_table('api-key-rules')
-
-        for i, (rule_name, version_pattern, rule_type, custom) in enumerate(rules):
-            row = api_key_rules.add({
-                'product_name': cls.product_name,
-                'rule_name': rule_name,
-                'assignment_order': i,
-                'version_patterns': version_pattern,
-                'rule_type': rule_type,
-            })
-            if rule_type == 'reject':
-                row['reject'] = {'status_code': custom[0], 'response_body': custom[1]}
-            elif rule_type == 'redirect':
-                row['redirect'] = {'tenant_name': custom}
+        cls._add_rules()
 
         nginx_config = nginxconf.generate_nginx_config(cls.tier_name)
         nginxconf.apply_nginx_config(nginx_config)
 
-        cls.ts = ts
-        cls.key_api = cls.api_1
-        cls.keyless_api = cls.api_2
+        cls.key_api = '/' + cls.api_1
+        cls.keyless_api = '/' + cls.api_2
 
     @classmethod
     def tearDownClass(cls):
         for patcher in cls.patchers:
             patcher.stop()
 
-    def get(self, uri, api_key=None, **kw):
+    def get(self, uri, api_key=None, version=None, status_code=None, tenant_name=None, check_accept=True, **kw):
         headers = kw.setdefault('headers', {})
         if api_key == 'product':
             headers['drift-api-key'] = self.product_api_key
         elif api_key == 'custom':
             headers['drift-api-key'] = self.custom_api_key
 
+        if version is not None:
+            headers['drift-api-key'] += ':' + version
+
+        if tenant_name is not None:
+            headers['Host'] = '{}.{}'.format(tenant_name, HTTP_HOST)
+
         headers.setdefault('Accept', 'application/json')
         url = 'http://{}:{}{}'.format(HOST, PORT, uri)
-        ret = requests.get(url, **kw)
-        self.assertEqual(ret.headers.get('Content-Type'), headers['Accept'])
+        ret = requests.get(url, allow_redirects=False, **kw)
+
+        if check_accept:
+            self.assertEqual(ret.headers.get('Content-Type'), headers['Accept'])
+
+            # Assert a properly formatted json response
+            if headers['Accept'] == 'application/json':
+                ret.json()
+
+        # Assert proper status code.
+        if status_code is None:
+            ret.raise_for_status()
+        elif status_code == 'ignore':
+            pass
+        else:
+            self.assertEqual(status_code, ret.status_code)
+
         return ret
 
     def kget(self, *args, **kw):
@@ -179,38 +183,150 @@ class TestNginxConfig(unittest.TestCase):
         self.assertEqual(ret.headers['Location'], https_url)
 
     def test_api_key_missing(self):
-        ret = self.get('/testing-key-missing/some-path')
-        self.assertEqual(ret.status_code, httplib.FORBIDDEN)  # 403
+        ret = self.get('/testing-key-missing/some-path', status_code=httplib.FORBIDDEN)
         self.assertEqual(ret.json()['error']['code'], 'api_key_missing')
 
-    def test_api_router_endpoint(self):
-        ret = self.get('/api-router')
-        ret.raise_for_status()
-        self.assertTrue(ret.json())
+    def xtest_api_router_endpoint(self):
+        self.get('/api-router')
 
     def test_not_found(self):
-        ret = self.get('/api-router/not/found')
-        self.assertEqual(ret.status_code, httplib.NOT_FOUND)  # 404
-        ret.json()
+        self.get('/api-router/not/found', status_code=httplib.NOT_FOUND)
 
     def test_healthcheck(self):
-        ret = self.get('/healthcheck')
-        ret.raise_for_status()
-        ret.json()  # Make sure it's a json response.
+        self.get('/healthcheck')
 
-    def test_keyless_api(self):
+    def test_apirouter_request_endpoint(self):
+        # This endpoint returns some introspected information. There is no key
+        # required.
+        self.get('/api-router/request')
+
+    def xtest_keyless_api(self):
         # This route exists, but with no targets. We can test keyless access by simply
         # accessing this endpoint and expect the "No targets registered" error.
-        ret = self.get('/' + self.keyless_api)
-        self.assertEqual(ret.status_code, httplib.SERVICE_UNAVAILABLE)  # 503
+        ret = self.get(self.keyless_api, status_code=httplib.SERVICE_UNAVAILABLE)
         self.assertIn("No targets registered", ret.json()['message'])
 
         # To assert the opposite works - a targetless endpoint but one which requires a key -
         # we try to access the endpoint that requires a key and expect the same error.
-        ret = self.kget('/' + self.key_api)
-        self.assertEqual(ret.status_code, httplib.SERVICE_UNAVAILABLE)  # 503
+        print "GETZING", self.key_api
+        ret = self.get(
+            self.key_api,
+            api_key='product',
+            tenant_name=self.tenant_name_1,
+            status_code=httplib.SERVICE_UNAVAILABLE
+        )
         self.assertIn("No targets registered", ret.json()['message'])
 
+    def test_name_mapping(self):
+        # Make sure the tenant name can be mapped to a product.
+        for tenant in self.ts.get_table('tenant-names').find():
+            # Skip over cls.product_name because it has all kinds of api rules associated with it.
+            if tenant['product_name'] == self.product_name:
+                continue
+            ret = self.get('/api-router/request', tenant_name=tenant['tenant_name'])
+            self.assertEqual(ret.json()['product'], tenant['product_name'])
+
+    @classmethod
+    def _add_rules(cls):
+        """The location of this function is for convenience as the test function comes right after it."""
+
+        # Make a few rules to test various cases:
+        # Rule 1: reject clients 1.6.0 and 1.6.2 and ask them to upgrade.
+        # Rule 2: redirect client 1.6.5 to another tenant.
+        # Rule 3: always let client 1.6.6 pass through.
+        # Rule 4: reject all clients with message "server is down".
+        rules = [
+            ('upgrade-client-1.6', ["1.6.0", "1.6.2"], 'reject', [404, {"action": "upgrade_client"}]),
+            ('redirect-to-new-tenant', ["1.6.5"], 'redirect', cls.tenant_name_2),
+            ('always-pass', ["1.6.6"], 'pass', cls.tenant_name_1),
+            ('downtime-message', [], 'reject', [503, {"message": "The server is down for maintenance."}]),
+        ]
+
+        api_key_rules = cls.ts.get_table('api-key-rules')
+
+        for i, (rule_name, version_pattern, rule_type, custom) in enumerate(rules):
+            row = api_key_rules.add({
+                'product_name': cls.product_name,
+                'rule_name': rule_name,
+                'assignment_order': i,
+                'version_patterns': version_pattern,
+                'rule_type': rule_type,
+            })
+            if rule_type == 'reject':
+                row['reject'] = {'status_code': custom[0], 'response_body': custom[1]}
+            elif rule_type == 'redirect':
+                row['redirect'] = {'tenant_name': custom}
+
+            row['response_header'] = {'Test-Rule-Name': rule_name}  # To test response headers
+
+    def test_api_key_rules(self):
+
+        # key_api requires a product keyless_api does not.
+
+        # Rule 1: reject clients 1.6.0 and 1.6.2 and ask them to upgrade.
+        ret = self.get(
+            self.key_api,
+            api_key='product', version='1.6.0',
+            tenant_name=self.tenant_name_1,
+            status_code=404,
+        )
+        self.assertDictContainsSubset({"action": "upgrade_client"}, ret.json())
+
+        # Rule 2: redirect client 1.6.5 to another tenant.
+        ret = self.get(
+            self.key_api,
+            api_key='product', version='1.6.5',
+            tenant_name=self.tenant_name_1,
+            status_code=302,
+            check_accept=False,  # TODO: Make nginx return json for 302's.
+        )
+        location = '{}.{}'.format(self.tenant_name_2, HTTP_HOST)
+        url = 'http://{}{}'.format(location, self.key_api)
+        self.assertEqual(ret.headers['Location'], url)
+
+        # Rule 3: always let client 1.6.6 pass through.
+        ret = self.get(
+            self.key_api,
+            api_key='product', version='1.6.6',
+            tenant_name=self.tenant_name_1,
+            status_code=503,
+        )
+        # This one passes through but will hit 503 because there is no upstream server
+        # for 'self.key_api'.
+        self.assertIn("No targets registered", ret.json()['message'])
+
+        # Rule 4: reject all clients with message "server is down".
+        ret = self.get(
+            self.key_api,
+            api_key='product', version='1.2.3',
+            tenant_name=self.tenant_name_1,
+            status_code=503,
+        )
+        self.assertIn("The server is down for maintenance.", ret.json()['message'])
+
+        # Run same check but without version
+        ret = self.get(
+            self.key_api,
+            api_key='product',
+            tenant_name=self.tenant_name_1,
+            status_code=503,
+        )
+        self.assertIn("The server is down for maintenance.", ret.json()['message'])
+
+
+    def xtest_api_key_rule_redirect(self):
+        # Test redirection from tenant_name_1 to tenant_name_2
+        ret = self.get(
+            '/some/path',
+            api_key='product', version='1.6.5',
+            tenant_name=self.tenant_name_1,
+            status_code=302,
+            check_accept=False,  # TODO: Make nginx return json for 302's.
+        )
+        print "reti is", ret, ret.text, ret.headers
+        location = '{}.{}'.format(self.tenant_name_2, HTTP_HOST)
+        url = 'http://{}/some/path'.format(location)
+        self.assertEqual(ret.headers['Location'], url)
 
 
 if __name__ == '__main__':
