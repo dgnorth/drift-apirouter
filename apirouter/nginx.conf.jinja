@@ -75,31 +75,75 @@ http {
     gzip_min_length 20;  # Change this to 0 to force gzip
 
 
-    ##
+    # Variables used in access control logic:
+
+    # $product_name         product name mapped from tenant name, or "_unknown_tenant_name"
+    # $drift_api_key        api key from client with without version, or "nokey"
+    # $host_domain          host domain name (hostname without the tenant name prefix)
+    # $tenant_name          tenant name (the prefix on the host name)
+    # $api_key_to_product   the product name for the given api key, or "_api key not found"
+    # $endpoint_requires_api_key     true | false depending if the endpoint or route requires it.
+
     # Map tenant name to product:
-    ##
     map $http_host $product_name {
         hostnames;  # Indicates that source values can be hostnames with a prefix or suffix mask
-        default _unknown_tenant_name;
+        default "_unknown_tenant_name";
         {% for tenant_name, product in tenants.items() %}
         {{ tenant_name }}.*   {{ product.product_name }};
         {%- endfor %}
     }
 
-    # Get tenant agnostic host
+    # Get api key from client with without version, or "nokey"
+    map $http_drift_api_key $drift_api_key {
+        default "nokey";
+        ~^(?<api_key>.*?)($|:)   $api_key;
+    }
+    # Get host domain name (hostname without the tenant name prefix)
     map $http_host $host_domain {
-         ~^(?<tenant>[^.]*)\.(?<domain>.*)$ $domain;
+         ~^(?<tenant>.*?)\.(?<domain>.*)$ $domain;
     }
 
-    # xxxxxxxxxx
-    map $http_drift_api_key $api_key {
-        default unknown;
-        ~^.*$ pass;
+    # Get tenant name (the prefix on the host name)
+    map $http_host $tenant_name {
+         ~^(?<tenant>.*?)\.(?<domain>.*)$ $tenant;
     }
 
-    map $http_host $whitehosts {
-        default unknown;
+    # Map api keys to products
+    map $drift_api_key $api_key_to_product {
+        default     "_api key not found";
+
+        # API keys from config:
+        {%- for key in conf.table_store.get_table('api-keys').find({'in_use': True}) %}
+        {{ key.api_key_name }}  {{ key.product_name }};
+        {%- endfor %}
     }
+
+
+    # See if endpoint requires api key
+    # Example of 'routes' info:
+    # routes = [
+    #     "tier_name": "TIERNAME",
+    #     "deployable_name": "deployable",
+    #     "api": "deployapi",
+    #     "requires_api_key": True,
+    #     "targets": [{"name": "x", "private_ip_address": "1.2.3.4", "tags": {...}}]
+    # ]
+    map $request_uri $endpoint_requires_api_key {
+        default "true";
+
+        # The following paths are always keyless:
+        ~*^/api-router(|/.*)$ "false";
+        /healthcheck "false";
+
+        # Routes from config:
+        {%- for name, route in routes.items() %}
+        {%- if not route.requires_api_key %}
+        ~*^/{{ name }}(|/.*)$ "false";
+        {%- endif %}
+        {%- endfor %}
+    }
+
+
 
 
     # Set up connection and request rate limits
@@ -125,34 +169,6 @@ http {
         {
             rewrite     ^   https://$host:8080$request_uri? permanent;
         }
-    }
-
-
-    # Example of 'routes' info:
-    # routes = [
-    #     "tier_name": "TIERNAME",
-    #     "deployable_name": "deployable",
-    #     "api": "deployapi",
-    #     "requires_api_key": True,
-    #     "targets": [{"name": "x", "private_ip_address": "1.2.3.4", "tags": {...}}]
-    # ]
-
-    ##
-    # API key rules
-    ##
-    map $request_uri $requires_api_key {
-        default "true";
-
-        # The following paths are always keyless:
-        ~*^/api-router(|/.*)$ "false";
-        /healthcheck "false";
-
-        # Routes from config:
-        {%- for name, route in routes.items() %}
-        {%- if not route.requires_api_key %}
-        ~*^/{{ name }}(|/.*)$ "false";
-        {%- endif %}
-        {%- endfor %}
     }
 
 
@@ -183,17 +199,15 @@ http {
                 error_log off;
         }
 
-        ##return 200 '{"product": "$product_name", "api_key", "$api_key",'
-
         location /api-router/request {
             return 200 '{
                 "tier": "{{ conf.tier.tier_name }}",
-                "product": "$product_name",
-                "api_key": "$api_key",
-                "requires_api_key": "$requires_api_key",
-                "drift_api_key": "$http_drift_api_key",
-                "whitehosts": "$whitehosts",
+                "product_name": "$product_name",
+                "drift_api_key": "$drift_api_key",
                 "host_domain": "$host_domain",
+                "tenant_name": "$tenant_name",
+                "api_key_to_product": "$api_key_to_product",
+                "endpoint_requires_api_key": "$endpoint_requires_api_key",
 
                 "server_name": "$server_name",
                 "remote_addr": "$remote_addr",
@@ -271,73 +285,20 @@ http {
         {% endif %}
         {% endfor %}
 
-        # Rules for API product keys and versions
-        # If a 'location' is exempt from all checks, it must set $api_check to "pass".
 
-
-        # if ($api_key = unknown) {
-        #     return 403
-        #     '{"status_code": 403, "message": "Forbidden",
-        #     "error": {"code": "api_key_missing", "description": "API key is missing or unknown."}}\n';
-        # }
 
         # API product key check
-        set $drift_api_key $http_drift_api_key;
-
-        if ($drift_api_key ~ "^acme2-prod1-99999999.*$") {
-            set $product_key_check "pass";
+        if ($product_name != $api_key_to_product) {
+            set $bad_key "true";
         }
 
+        set $bad_key_and_requires_key "${bad_key}:${endpoint_requires_api_key}";
 
-        # API key custom rules
-        set $product_and_key "${product_name}:${drift_api_key}";
-
-
-        # rule: ('upgrade-client-1.6', ["1.6.0", "1.6.2"], 'reject', [404, {"action": "upgrade_client"}]),
-        # Note: Escape dots in the version
-
-        # Rules for product "acme2-prod1" -------------------------------------
-
-        # Rule: acme2-prod1:upgrade-client-1.6
-        if ($product_and_key ~ "^acme2-prod1:acme2-prod1-99999999:1\.6\.0$") {
-            return 404 '{"action": "upgrade_client"}\n';
-        }
-        if ($product_and_key ~ "^acme2-prod1:acme2-prod1-99999999:1\.6\.2$") {
-            return 404 '{"action": "upgrade_client"}\n';
-        }
-
-        # Rule: acme2-prod1:redirect-to-ohmnom
-        if ($product_and_key ~ "^acme2-prod1:acme2-prod1-99999999:1\.6\.5$") {
-            return 302 "${scheme}://acme2-prod1-test0.${host_domain}${request_uri}";
-        }
-
-        # Rule: acme2-prod1:always-pass
-        if ($product_and_key ~ "^acme2-prod1:acme2-prod1-99999999:1\.6\.6$") {
-            set $product_and_key "pass";
-        }
-
-        # Rule: acme2-prod1:downtime-message
-        if ($product_and_key ~ "^acme2-prod1:acme2-prod1-99999999.*$") {
-            return 503 '{"message": "The server is down for maintenance."}\n';
-        }
-
-
-        # Rule terminator.
-        set $key_and_rule_check "${product_key_check}:${product_and_key}";
-
-        if ($requires_api_key = "false") {
-            set $key_and_rule_check "pass:pass";
-        }
-
-        if ($key_and_rule_check != "pass:pass") {
+        if ($bad_key_and_requires_key = "true:true") {
             return 403
             '{"status_code": 403, "message": "Forbidden",
             "error": {"code": "api_key_missing", "description": "API key is missing or unknown."}}\n';
         }
-
-
-
-
     }
 
     ##
@@ -353,9 +314,5 @@ http {
     {% endif %}
     {% endfor %}
 
-
-    # RENDER STOPS HERE! maybe.. ----------------------------------------------------------------------
-    {% if False %}
-    {% endif %}
 }
 

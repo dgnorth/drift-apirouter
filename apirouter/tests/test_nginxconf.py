@@ -186,8 +186,8 @@ class TestNginxConfig(unittest.TestCase):
         ret = self.get('/testing-key-missing/some-path', status_code=httplib.FORBIDDEN)
         self.assertEqual(ret.json()['error']['code'], 'api_key_missing')
 
-    def xtest_api_router_endpoint(self):
-        self.get('/api-router')
+    def test_api_router_endpoint(self):
+        ret = self.get('/api-router/')
 
     def test_not_found(self):
         self.get('/api-router/not/found', status_code=httplib.NOT_FOUND)
@@ -200,23 +200,6 @@ class TestNginxConfig(unittest.TestCase):
         # required.
         self.get('/api-router/request')
 
-    def xtest_keyless_api(self):
-        # This route exists, but with no targets. We can test keyless access by simply
-        # accessing this endpoint and expect the "No targets registered" error.
-        ret = self.get(self.keyless_api, status_code=httplib.SERVICE_UNAVAILABLE)
-        self.assertIn("No targets registered", ret.json()['message'])
-
-        # To assert the opposite works - a targetless endpoint but one which requires a key -
-        # we try to access the endpoint that requires a key and expect the same error.
-        print "GETZING", self.key_api
-        ret = self.get(
-            self.key_api,
-            api_key='product',
-            tenant_name=self.tenant_name_1,
-            status_code=httplib.SERVICE_UNAVAILABLE
-        )
-        self.assertIn("No targets registered", ret.json()['message'])
-
     def test_name_mapping(self):
         # Make sure the tenant name can be mapped to a product.
         for tenant in self.ts.get_table('tenant-names').find():
@@ -224,8 +207,9 @@ class TestNginxConfig(unittest.TestCase):
             if tenant['product_name'] == self.product_name:
                 continue
             ret = self.get('/api-router/request', tenant_name=tenant['tenant_name'])
-            self.assertEqual(ret.json()['product'], tenant['product_name'])
+            self.assertEqual(ret.json()['product_name'], tenant['product_name'])
 
+    # NOTE!!!!!!!!!! This will be moved into the flask stack!!!!!!
     @classmethod
     def _add_rules(cls):
         """The location of this function is for convenience as the test function comes right after it."""
@@ -259,34 +243,10 @@ class TestNginxConfig(unittest.TestCase):
 
             row['response_header'] = {'Test-Rule-Name': rule_name}  # To test response headers
 
-    def test_api_key_rules(self):
-
-        # key_api requires a product keyless_api does not.
-
-        # Rule 1: reject clients 1.6.0 and 1.6.2 and ask them to upgrade.
+    def test_api_key(self):
+        # First, test keyless endpoint, with and without a key
         ret = self.get(
-            self.key_api,
-            api_key='product', version='1.6.0',
-            tenant_name=self.tenant_name_1,
-            status_code=404,
-        )
-        self.assertDictContainsSubset({"action": "upgrade_client"}, ret.json())
-
-        # Rule 2: redirect client 1.6.5 to another tenant.
-        ret = self.get(
-            self.key_api,
-            api_key='product', version='1.6.5',
-            tenant_name=self.tenant_name_1,
-            status_code=302,
-            check_accept=False,  # TODO: Make nginx return json for 302's.
-        )
-        location = '{}.{}'.format(self.tenant_name_2, HTTP_HOST)
-        url = 'http://{}{}'.format(location, self.key_api)
-        self.assertEqual(ret.headers['Location'], url)
-
-        # Rule 3: always let client 1.6.6 pass through.
-        ret = self.get(
-            self.key_api,
+            self.keyless_api,
             api_key='product', version='1.6.6',
             tenant_name=self.tenant_name_1,
             status_code=503,
@@ -295,38 +255,36 @@ class TestNginxConfig(unittest.TestCase):
         # for 'self.key_api'.
         self.assertIn("No targets registered", ret.json()['message'])
 
-        # Rule 4: reject all clients with message "server is down".
         ret = self.get(
-            self.key_api,
-            api_key='product', version='1.2.3',
+            self.keyless_api,
             tenant_name=self.tenant_name_1,
             status_code=503,
         )
-        self.assertIn("The server is down for maintenance.", ret.json()['message'])
+        self.assertIn("No targets registered", ret.json()['message'])
 
-        # Run same check but without version
+        # Now test endpoint which requires a key, using a valid key, invalid key and no key
         ret = self.get(
             self.key_api,
-            api_key='product',
+            api_key='product', version='1.6.6',
             tenant_name=self.tenant_name_1,
             status_code=503,
         )
-        self.assertIn("The server is down for maintenance.", ret.json()['message'])
+        self.assertIn("No targets registered", ret.json()['message'])
 
-
-    def xtest_api_key_rule_redirect(self):
-        # Test redirection from tenant_name_1 to tenant_name_2
         ret = self.get(
-            '/some/path',
-            api_key='product', version='1.6.5',
+            self.key_api,
             tenant_name=self.tenant_name_1,
-            status_code=302,
-            check_accept=False,  # TODO: Make nginx return json for 302's.
+            status_code=403,
         )
-        print "reti is", ret, ret.text, ret.headers
-        location = '{}.{}'.format(self.tenant_name_2, HTTP_HOST)
-        url = 'http://{}/some/path'.format(location)
-        self.assertEqual(ret.headers['Location'], url)
+        self.assertDictContainsSubset({"code": "api_key_missing"}, ret.json()['error'])
+
+        ret = self.get(
+            self.key_api,
+            headers={'drift-api-key': 'totally bogus key'},
+            tenant_name=self.tenant_name_1,
+            status_code=403,
+        )
+        self.assertDictContainsSubset({"code": "api_key_missing"}, ret.json()['error'])
 
 
 if __name__ == '__main__':
