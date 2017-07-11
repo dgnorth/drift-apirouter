@@ -8,13 +8,14 @@ See https://github.com/Homebrew/homebrew-nginx and https://homebrew-nginx.marcqu
 """
 import os
 import sys
-import pkg_resources
 import logging
 import subprocess
+import json
+import time
 
 import boto3
 
-from jinja2 import Template
+from jinja2 import Environment, PackageLoader
 from driftconfig.util import get_drift_config
 
 log = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ if sys.platform.startswith("linux"):
         'etc': '/etc',
         'pid': '/run/nginx.pid',
         'log': '/var/log',
-        'nginx_config': 'etc/nginx/nginx.conf',
+        'nginx_config': '/etc/nginx/nginx.conf',
     }
 elif sys.platform == 'darwin':
     platform = {
@@ -62,7 +63,7 @@ def _prepare_info(tier_name):
     api_targets = get_api_targets(conf, deployables)
     routes = {}
 
-    for route in ts.get_table('routing').find({'tier_name': tier_name}):
+    for route in ts.get_table('routing').find():
         deployable_name = route['deployable_name']
         routes[deployable_name] = route.copy()
         routes[deployable_name].setdefault('api', deployable_name)  # Makes it easier for the template code.
@@ -133,7 +134,7 @@ def _prepare_info(tier_name):
 
     # This should come from the "new" nginx config table:
     nginx = {
-        'userx': 'matti-staff',
+        'userx': 'staffy-staff',
     }
 
     ret = {
@@ -227,8 +228,10 @@ def get_api_targets_from_aws(conf, deployables):
 
 def generate_nginx_config(tier_name):
     data = _prepare_info(tier_name=tier_name)
-    nginx_template = pkg_resources.resource_string(__name__, 'nginx.conf.jinja')
-    nginx_config_text = Template(nginx_template).render(**data)
+    env = Environment(loader=PackageLoader('apirouter', ''))
+    env.filters['jsonify'] = json.dumps
+    template = env.get_template('nginx.conf.jinja')
+    nginx_config_text = template.render(**data)
     return {'config': nginx_config_text, 'data': data}
 
 
@@ -240,7 +243,7 @@ def apply_nginx_config(nginx_config):
     if ret != 0:
         return ret
     ret = subprocess.call(['sudo', 'nginx', '-s', 'reload'])
-    import time; time.sleep(1)
+    time.sleep(1)
     if ret != 0:
         return ret
 
@@ -256,6 +259,13 @@ def filterize(d):
 def fold_tags(tags, key_name=None, value_name=None):
     """Fold boto3 resource tags array into a dictionary."""
     return {tag['Key']: tag['Value'] for tag in tags}
+
+
+def cli():
+    logging.basicConfig(level='WARNING')
+    nginx_config = generate_nginx_config(tier_name=os.environ['DRIFT_TIER'])
+    apply_nginx_config(nginx_config)
+    print "New config applied."
 
 
 if __name__ == '__main__':

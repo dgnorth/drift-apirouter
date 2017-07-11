@@ -4,6 +4,10 @@ import unittest
 import requests
 import httplib
 import mock
+from wsgiref.util import setup_testing_defaults
+from wsgiref.simple_server import make_server
+import threading
+import json
 
 from driftconfig.testhelpers import create_test_domain
 
@@ -19,26 +23,56 @@ HTTP_HOST = 'something.com'
 PORT = 8080         # todo: do not hardcode, get this from nginx config
 REDIR_PORT = PORT + 1
 
+UPSTREAM_SERVER_PORT = 8098
+
 REQUEST_HOST = 'just.a.test'
 HOST_HEADER = {'Host': REQUEST_HOST}
 
 
-# Some patching
-def get_api_targets(tier_name, region_name):
-    tags = {'api-status': 'online', 'api-target': 'nginxtest', 'api-port': 555}
-    targets = [
-        {'name': 'test instance', 'instance_id': 'test-1', 'private_ip_address': '10.0.0.1', 'instance_type': 't2.small', 'tags': tags, 'placement': {'AvailabilityZone': 'test-zone-1a'}, 'comment': "DEVNORTH-drift-base [t2.small] [eu-west-1b]"},
-        {'name': 'test instance', 'instance_id': 'test-2', 'private_ip_address': '10.0.0.2', 'instance_type': 't2.small', 'tags': tags, 'placement': {'AvailabilityZone': 'test-zone-1a'}, 'comment': "DEVNORTH-drift-base [t2.small] [eu-west-1b]"},
-    ]
-    return {'nginxtest': targets}
+# A relatively simple WSGI application. It's going to print out the
+# environment dictionary after being updated by setup_testing_defaults
+def simple_app(environ, start_response):
+    setup_testing_defaults(environ)
+    status = '200 OK'
+    headers = [('Content-type', 'application/json')]
+    start_response(status, headers)
+    ret = json.dumps({"test_target": "ok"}, indent=4)
+    return ret
 
 
 class TestNginxConfig(unittest.TestCase):
 
+
+    # Some patching
+    @classmethod
+    def get_api_targets(cls, tier_name, region_name):
+        tags = {'api-status': 'online', 'api-target': cls.api_1, 'api-port': UPSTREAM_SERVER_PORT}
+        targets = [
+            {
+                'name': 'test instance',
+                'instance_id': 'test-{}'.format(i),
+                'private_ip_address': '127.0.0.1',
+                'instance_type': 't2.small',
+                'tags': tags,
+                'placement': {'AvailabilityZone': 'test-zone-1a'}, 'comment': "SOMETIER-drift-base [t2.small] [eu-west-1b]"
+            }
+            for i in xrange(3)
+        ]
+
+        return {cls.api_1: targets}
+
+
     @classmethod
     def setUpClass(cls):
+
+        # Run echo server
+        print "serving at port", UPSTREAM_SERVER_PORT
+        cls.httpd = make_server('', UPSTREAM_SERVER_PORT, simple_app)
+        cls.server_thread = threading.Thread(target=cls.httpd.serve_forever)
+        cls.server_thread.start()
+
         cls.patchers = [
-            mock.patch('apirouter.nginxconf.get_api_targets', get_api_targets),
+            mock.patch('apirouter.nginxconf.get_api_targets', cls.get_api_targets),
         ]
 
         for patcher in cls.patchers:
@@ -95,13 +129,12 @@ class TestNginxConfig(unittest.TestCase):
         # Generate 'routing' data
         routing = ts.get_table('routing')
         routing.add({
-            'tier_name': cls.tier_name,
             'deployable_name': cls.api_1,
             'requires_api_key': True,
+            'api': cls.api_1 + '_mangled',
         })
 
         routing.add({
-            'tier_name': cls.tier_name,
             'deployable_name': cls.api_2,
             'requires_api_key': False,
         })
@@ -122,8 +155,6 @@ class TestNginxConfig(unittest.TestCase):
             'key_type': 'custom',
         })
 
-        cls._add_rules()
-
         nginx_config = nginxconf.generate_nginx_config(cls.tier_name)
         nginxconf.apply_nginx_config(nginx_config)
 
@@ -132,6 +163,9 @@ class TestNginxConfig(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        cls.httpd.shutdown()
+        cls.httpd.server_close()
+
         for patcher in cls.patchers:
             patcher.stop()
 
@@ -264,12 +298,12 @@ class TestNginxConfig(unittest.TestCase):
 
         # Now test endpoint which requires a key, using a valid key, invalid key and no key
         ret = self.get(
-            self.key_api,
+            self.key_api + '_mangled',
             api_key='product', version='1.6.6',
             tenant_name=self.tenant_name_1,
-            status_code=503,
+            status_code=200,
         )
-        self.assertIn("No targets registered", ret.json()['message'])
+        self.assertIn("test_target", ret.json())
 
         ret = self.get(
             self.key_api,

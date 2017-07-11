@@ -8,7 +8,7 @@ setup(
     license='MIT',
     author="Directive Games North",
     author_email="info@directivegames.com",
-    description="Routes HTTP requests to Drift REST API Services.",
+    description="Routes HTTP requests to Drift Web Services.",
     packages=find_packages(
         exclude=["*.tests", "*.tests.*", "tests.*", "tests"]
     ),
@@ -17,11 +17,10 @@ setup(
     install_requires=[
     ],
 
-    # entry_points='''
-    #     [drift.plugin]
-    #     register_deployable=drift.management.commands.register:funky
-    #     provision=drift.core.resources.postgres:provision
-    # ''',
+    entry_points='''
+        [console_scripts]
+        apirouter-conf=apirouter.nginxconf:cli
+    ''',
 
     classifiers=[
         'Drift :: Tag :: Core',

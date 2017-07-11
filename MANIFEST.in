@@ -1,0 +1,2 @@
+include apirouter/nginx.conf.jinja
+include requirements.txt
