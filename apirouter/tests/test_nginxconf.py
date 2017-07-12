@@ -46,7 +46,7 @@ class TestNginxConfig(unittest.TestCase):
     # Some patching
     @classmethod
     def get_api_targets(cls, tier_name, region_name):
-        tags = {'api-status': 'online', 'api-target': cls.api_1, 'api-port': UPSTREAM_SERVER_PORT}
+        tags = {'api-status': 'online', 'api-target': cls.deployable_1, 'api-port': UPSTREAM_SERVER_PORT}
         targets = [
             {
                 'name': 'test instance',
@@ -59,7 +59,7 @@ class TestNginxConfig(unittest.TestCase):
             for i in xrange(3)
         ]
 
-        return {cls.api_1: targets}
+        return {cls.deployable_1: targets}
 
 
     @classmethod
@@ -118,25 +118,28 @@ class TestNginxConfig(unittest.TestCase):
         # Extract names from config. This way there's no need to assume how the names are generated
         # by create_test_domain() function.
         cls.tier_name = ts.get_table('tiers').find()[0]['tier_name']
-        cls.api_1 = ts.get_table('deployables').find()[0]['deployable_name']
-        cls.api_2 = ts.get_table('deployables').find()[1]['deployable_name']
         cls.product_name = ts.get_table('products').find()[0]['product_name']
         cls.tenant_name_1 = ts.get_table('tenant-names').find({'product_name': cls.product_name})[0]['tenant_name']
         cls.tenant_name_2 = ts.get_table('tenant-names').find({'product_name': cls.product_name})[1]['tenant_name']
 
         # Add api router specific config data:
+        cls.deployable_1 = ts.get_table('deployables').find()[0]['deployable_name']
+        cls.deployable_2 = ts.get_table('deployables').find()[1]['deployable_name']
+        cls.api_1 = cls.deployable_1 + '_custom'  # The route prefix name is not neccessary the same as the deployable name.
+        cls.api_2 = cls.deployable_2
 
         # Generate 'routing' data
         routing = ts.get_table('routing')
         routing.add({
-            'deployable_name': cls.api_1,
+            'deployable_name': cls.deployable_1,
             'requires_api_key': True,
-            'api': cls.api_1 + '_mangled',
+            'api': cls.api_1,
         })
 
         routing.add({
-            'deployable_name': cls.api_2,
+            'deployable_name': cls.deployable_2,
             'requires_api_key': False,
+            # Ommit the 'api'. The 'deployable_name' will be used as the api prefix.
         })
 
         # Generate 'api-keys' and 'api-key-rules' data
