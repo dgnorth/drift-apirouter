@@ -93,7 +93,8 @@ http {
         {%- endfor %}
     }
 
-    # Get api key from client with without version, or "nokey"
+    # Get api key from client, rstrip optional version from it (indicated with
+    # a colon). If key is not found, "nokey" value is used.
     map $http_drift_api_key $drift_api_key {
         default "nokey";
         ~^(?<api_key>.*?)($|:)   $api_key;
@@ -238,7 +239,8 @@ http {
                     "Connection": "$http_connection",
                     "Host": "$http_host",
                     "Upgrade-Insecure-Requests": "$http_insecure_requests",
-                    "User-Agent": "$http_user_agent"
+                    "User-Agent": "$http_user_agent",
+                    "Drift-Api-Key": "$http_drift_api_key"
                 },
 
                 "upstream_servers":

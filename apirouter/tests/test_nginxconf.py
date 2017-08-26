@@ -281,7 +281,17 @@ class TestNginxConfig(unittest.TestCase):
             row['response_header'] = {'Test-Rule-Name': rule_name}  # To test response headers
 
     def test_api_key(self):
-        # First, test keyless endpoint, with and without a key
+        # First, test keyless endpoint, with and without a key. Test versioned and
+        # versionless key.
+        ret = self.get(
+            self.keyless_api,
+            api_key='product', version=None,
+            tenant_name=self.tenant_name_1,
+            status_code=503,
+        )
+        # This one passes through but will hit 503 because there is no upstream server
+        # for 'self.key_api'.
+        self.assertIn("No targets registered", ret.json()['message'])
         ret = self.get(
             self.keyless_api,
             api_key='product', version='1.6.6',
