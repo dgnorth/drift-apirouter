@@ -8,7 +8,7 @@ worker_processes auto;
 pid {{ plat.pid }};
 
 events {
-    worker_connections 768;
+    worker_connections 1024;
     # multi_accept on;
 }
 
@@ -255,7 +255,7 @@ http {
                             {{ target.private_ip_address | jsonify }}{{ "," if not loop.last }}
                             {%- endfor %}
                         ]
-                    }
+                    }{{ "," if not loop.last }}
                     {%- endif %}
                     {%- endfor %}
                 ]
