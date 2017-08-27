@@ -235,8 +235,12 @@ def generate_nginx_config(tier_name):
     return {'config': nginx_config_text, 'data': data}
 
 
-def apply_nginx_config(nginx_config):
+def apply_nginx_config(nginx_config, skip_if_same=True):
     """Apply the Nginx config on the local machine and trigger a reload."""
+    with open(platform['nginx_config'], 'r') as f:
+        if nginx_config['config'] == f.read() and skip_if_same:
+            return "skipped"
+
     with open(platform['nginx_config'], 'w') as f:
         f.write(nginx_config['config'])
     ret = subprocess.call(['sudo', 'nginx', '-t'])
@@ -264,8 +268,11 @@ def fold_tags(tags, key_name=None, value_name=None):
 def cli():
     logging.basicConfig(level='WARNING')
     nginx_config = generate_nginx_config(tier_name=os.environ['DRIFT_TIER'])
-    apply_nginx_config(nginx_config)
-    print "New config applied."
+    ret = apply_nginx_config(nginx_config)
+    if ret == "skipped":
+        print "No change detected."
+    else:
+        print "New config applied."
 
 
 if __name__ == '__main__':
