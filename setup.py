@@ -1,5 +1,25 @@
 from setuptools import setup, find_packages
-from pip.req import parse_requirements
+from setuptools.command.install import install
+import pip
+import sys
+import pkg_resources
+import subprocess
+import os
+
+
+class CustomInstallCommand(install):
+    def run(self):
+        ret = install.run(self)
+
+        if sys.platform.startswith("linux"):
+            print "Running custom install steps for Linux platform"
+            setup_script = pkg_resources.resource_filename(__name__, "scripts/setup")
+            print "Executing ", setup_script
+            subprocess.call(setup_script)
+        elif sys.platform.startswith("darwin"):
+            print "Note! Custom install steps not defined for OSX."
+        else:
+            print "Note! Custom install steps not defined for platform ", sys.platform
 
 
 setup(
@@ -15,12 +35,19 @@ setup(
     include_package_data=True,
 
     install_requires=[
+        str(i.req)
+        for i in pip.req.parse_requirements(pkg_resources.resource_filename(__name__, "requirements.txt"), session=pip.download.PipSession())
+        if i.req
     ],
 
     entry_points='''
         [console_scripts]
         apirouter-conf=apirouter.nginxconf:cli
     ''',
+
+    cmdclass={
+        'install': CustomInstallCommand,
+    },
 
     classifiers=[
         'Drift :: Tag :: Core',

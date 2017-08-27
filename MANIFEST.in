@@ -1,2 +1,3 @@
 include apirouter/nginx.conf.jinja
 include requirements.txt
+recursive-include scripts/*
