@@ -93,12 +93,15 @@ pidfile = /var/run/pgbouncer/pgbouncer.pid
 listen_addr = 0.0.0.0
 listen_port = 6432
 auth_file = /usr/local/etc/userlist.txt
-pool_mode = session
+pool_mode = transaction
 
 max_user_connections = 300
 
 ; total number of clients that can connect
 max_client_conn = 300
+
+max_db_connections = 50
+
 ```
 
 
