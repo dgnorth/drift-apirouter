@@ -4,7 +4,7 @@
 {% if nginx.user %}
 user {{ nginx.user }};
 {% else %}
-user nginx;
+user ubuntu;
 {% endif %}
 worker_processes auto;
 pid {{ plat.pid }};
