@@ -1,0 +1,12 @@
+/var/log/drift/apirouter.log
+{
+    rotate 4
+    weekly
+    missingok
+    notifempty
+    delaycompress
+    compress
+    postrotate
+        reload rsyslog >/dev/null 2>&1 || true
+    endscript
+}
