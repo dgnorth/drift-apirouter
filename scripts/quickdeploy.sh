@@ -1,3 +1,3 @@
 #!/bin/bash
-apirouter-conf
-sudo service nginx restart
+/usr/local/bin/apirouter-conf
+sudo nginx -s reload
