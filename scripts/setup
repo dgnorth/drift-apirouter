@@ -1,8 +1,0 @@
-#!/bin/bash
-
-if crontab -l -u ubuntu | grep -q 'apirouter-conf'; then
-  echo "crontab already configured"
-else
-  echo "updating crontab"
-  sudo crontab -l -u ubuntu | { cat; echo "* * * * * /usr/local/bin/apirouter-conf >> ~/apirouter.log 2>&1"; } | crontab - -u ubuntu
-fi
