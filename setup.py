@@ -22,7 +22,7 @@ setup(
 
     tests_require=[
         'uwsgi',
-    ]
+    ],
 
     entry_points='''
         [console_scripts]
