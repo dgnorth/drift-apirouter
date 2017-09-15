@@ -163,8 +163,9 @@ class TestNginxConfig(unittest.TestCase):
             'tier_name': cls.tier_name,
             # 'user': getpass.getuser(),
             'api_key_passthrough': [
-                {'key_name': 'drift-api-key', 'key_value': '^LetMeIn:.*:8888$'},
-                {'key_name': 'magic-api-key', 'key_value': '^LetMeInAsWell:.*:1234$'},
+                {'key_name': 'drift-api-key', 'key_value': '^LetMeIn:.*:8888$', 'product_name': cls.product_name},
+                {'key_name': 'magic-api-key', 'key_value': '^LetMeInAsWell:.*:1234$', 'product_name': cls.product_name},
+                {'key_name': 'drift-api-key', 'key_value': '^LockMeOut:.*:8888$', 'product_name': 'a-different-product'},
             ],
             'worker_rlimit_nofile': 100,
             'worker_connections': 100,
@@ -381,6 +382,16 @@ class TestNginxConfig(unittest.TestCase):
             status_code=200,
         )
         self.assertIn("test_target", ret.json())
+
+        # Test mismatched products
+        ret = self.get(
+            self.key_api,
+            headers={'drift-api-key': 'LockMeOut:1.2.3:8888'},
+            tenant_name=self.tenant_name_1,
+            status_code=403,
+        )
+        self.assertDictContainsSubset({"code": "api_key_missing"}, ret.json()['error'])
+        self.assertEqual(ret.json()['error']['description'], "API key does not match the given product.")
 
         # Test bad key and requires key flags in the nginx config itself.
         ret = self.get('/api-router/request')
