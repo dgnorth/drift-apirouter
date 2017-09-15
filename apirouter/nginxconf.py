@@ -219,8 +219,6 @@ def get_api_targets_from_aws(conf, deployables):
             'comment': "{} [{}] [{}]".format(name, ec2.instance_type, ec2.placement['AvailabilityZone']),
         }
 
-        print "rager comeomment:", target['comment']
-
         api_targets.setdefault(api_target, []).append(target)
 
     return api_targets
