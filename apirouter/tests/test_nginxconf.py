@@ -6,8 +6,9 @@ import httplib
 import mock
 from wsgiref.util import setup_testing_defaults
 from wsgiref.simple_server import make_server
-import threading
+import subprocess
 import json
+import getpass
 
 from driftconfig.testhelpers import create_test_domain
 
@@ -37,6 +38,10 @@ def simple_app(environ, start_response):
     headers = [('Content-type', 'application/json')]
     start_response(status, headers)
     ret = json.dumps({"test_target": "ok"}, indent=4)
+    req = '{REQUEST_METHOD} http://{HTTP_HOST}{REQUEST_URI}{QUERY_STRING}'.format(**environ)
+    print "UWSGI request:", req
+    if 'HTTP_DRIFT_API_KEY' in environ:
+        print "HTTP_DRIFT_API_KEY:", environ['HTTP_DRIFT_API_KEY']
     return ret
 
 
@@ -64,12 +69,6 @@ class TestNginxConfig(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-
-        # Run echo server
-        print "serving at port", UPSTREAM_SERVER_PORT
-        cls.httpd = make_server('', UPSTREAM_SERVER_PORT, simple_app)
-        cls.server_thread = threading.Thread(target=cls.httpd.serve_forever)
-        cls.server_thread.start()
 
         cls.patchers = [
             mock.patch('apirouter.nginxconf.get_api_targets', cls.get_api_targets),
@@ -158,16 +157,39 @@ class TestNginxConfig(unittest.TestCase):
             'key_type': 'custom',
         })
 
+        # Generate 'nginx' data
+        nginx = ts.get_table('nginx')
+        nginx.add({
+            'tier_name': cls.tier_name,
+            # 'user': getpass.getuser(),
+            'api_key_passthrough': [
+                {'key_name': 'drift-api-key', 'key_value': '^LetMeIn:.*:8888$'},
+                {'key_name': 'magic-api-key', 'key_value': '^LetMeInAsWell:.*:1234$'},
+            ],
+            'worker_rlimit_nofile': 100,
+            'worker_connections': 100,
+        })
+
         nginx_config = nginxconf.generate_nginx_config(cls.tier_name)
-        nginxconf.apply_nginx_config(nginx_config)
+        ret = nginxconf.apply_nginx_config(nginx_config, skip_if_same=False)
+        if ret != 0:
+            raise RuntimeError("Failed to set up test, apply_nginx_config() returned with {}.".format(ret))
 
         cls.key_api = '/' + cls.api_1
         cls.keyless_api = '/' + cls.api_2
 
+        # Run uwsgi echo server.
+        cmd = [
+            'uwsgi',
+            '--socket', ':{}'.format(UPSTREAM_SERVER_PORT),
+            '--wsgi-file', __file__,
+            '--callable', 'simple_app'
+        ]
+        cls.uwsgi = subprocess.Popen(cmd)
+
     @classmethod
     def tearDownClass(cls):
-        cls.httpd.shutdown()
-        cls.httpd.server_close()
+        cls.uwsgi.terminate()
 
         for patcher in cls.patchers:
             patcher.stop()
@@ -194,7 +216,13 @@ class TestNginxConfig(unittest.TestCase):
 
             # Assert a properly formatted json response
             if headers['Accept'] == 'application/json':
-                ret.json()
+                try:
+                    ret.json()
+                except Exception as e:
+                    print "Badly formatted json or no json at all:"
+                    print e
+                    print ret.text
+                    raise
 
         # Assert proper status code.
         if status_code is None:
@@ -246,6 +274,7 @@ class TestNginxConfig(unittest.TestCase):
             ret = self.get('/api-router/request', tenant_name=tenant['tenant_name'])
             self.assertEqual(ret.json()['product_name'], tenant['product_name'])
 
+
     # NOTE!!!!!!!!!! This will be moved into the flask stack!!!!!!
     @classmethod
     def _add_rules(cls):
@@ -280,7 +309,7 @@ class TestNginxConfig(unittest.TestCase):
 
             row['response_header'] = {'Test-Rule-Name': rule_name}  # To test response headers
 
-    def test_api_key(self):
+    def test_keyless_endpoints(self):
         # First, test keyless endpoint, with and without a key. Test versioned and
         # versionless key.
         ret = self.get(
@@ -292,6 +321,7 @@ class TestNginxConfig(unittest.TestCase):
         # This one passes through but will hit 503 because there is no upstream server
         # for 'self.key_api'.
         self.assertIn("No targets registered", ret.json()['message'])
+
         ret = self.get(
             self.keyless_api,
             api_key='product', version='1.6.6',
@@ -309,9 +339,10 @@ class TestNginxConfig(unittest.TestCase):
         )
         self.assertIn("No targets registered", ret.json()['message'])
 
+    def test_api_key_check(self):
         # Now test endpoint which requires a key, using a valid key, invalid key and no key
         ret = self.get(
-            self.key_api + '_mangled',
+            self.key_api,
             api_key='product', version='1.6.6',
             tenant_name=self.tenant_name_1,
             status_code=200,
@@ -332,6 +363,37 @@ class TestNginxConfig(unittest.TestCase):
             status_code=403,
         )
         self.assertDictContainsSubset({"code": "api_key_missing"}, ret.json()['error'])
+
+    def test_api_key_passthrough(self):
+        # Test passthrough
+        ret = self.get(
+            self.key_api,
+            headers={'drift-api-key': 'LetMeIn:1.2.3:8888'},
+            tenant_name=self.tenant_name_1,
+            status_code=200,
+        )
+        self.assertIn("test_target", ret.json())
+
+        ret = self.get(
+            self.key_api,
+            headers={'magic-api-key': 'LetMeInAsWell:1.2.3:1234'},
+            tenant_name=self.tenant_name_1,
+            status_code=200,
+        )
+        self.assertIn("test_target", ret.json())
+
+        # Test bad key and requires key flags in the nginx config itself.
+        ret = self.get('/api-router/request')
+        self.assertEqual(ret.json()['bad_key_and_requires_key'], 'true:false')
+
+        # Note: we
+        ret = self.get(
+            '/api-router/request',
+            api_key='product',
+            version='1.6.6',
+            tenant_name=self.tenant_name_1
+        )
+        self.assertEqual(ret.json()['bad_key_and_requires_key'], 'false:false')
 
 
 if __name__ == '__main__':

@@ -133,9 +133,7 @@ def _prepare_info(tier_name):
             api_keys[api_key['api_key_name']] = ''
 
     # This should come from the "new" nginx config table:
-    nginx = {
-        'userx': 'staffy-staff',
-    }
+    nginx = ts.get_table('nginx').get({'tier_name': tier_name})
 
     ret = {
         'conf': conf,
@@ -198,7 +196,7 @@ def get_api_targets_from_aws(conf, deployables):
             log.info("EC2 instance %s[%s] not in rotation, as '%s' is configured as inactive.", name, ec2.instance_id[:7], api_target)
             continue
 
-        if api_status != 'online':
+        if api_status != 'online2':
             log.info("EC2 instance %s[%s] not in rotation, '%s' api-status tag is '%s'.", name, ec2.instance_id[:7], api_status)
             continue
 
@@ -246,8 +244,7 @@ def apply_nginx_config(nginx_config, skip_if_same=True):
         return ret
     ret = subprocess.call(['sudo', 'nginx', '-s', 'reload'])
     time.sleep(1)
-    if ret != 0:
-        return ret
+    return ret
 
 
 def filterize(d):

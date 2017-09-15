@@ -20,6 +20,10 @@ setup(
         if i.req
     ],
 
+    tests_require=[
+        'uwsgi',
+    ]
+
     entry_points='''
         [console_scripts]
         apirouter-conf=apirouter.nginxconf:cli

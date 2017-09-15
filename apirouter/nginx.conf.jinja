@@ -4,14 +4,14 @@
 {% if nginx.user %}
 user {{ nginx.user }};
 {% else %}
-user ubuntu;
+#user ubuntu;
 {% endif %}
 worker_processes auto;
 pid {{ plat.pid }};
-worker_rlimit_nofile 30000;
+worker_rlimit_nofile {{ nginx.worker_rlimit_nofile if nginx.worker_rlimit_nofile else "30000" }};
 
 events {
-    worker_connections 30000;
+    worker_connections {{ nginx.worker_connections if nginx.worker_connections else "30000" }};
     # multi_accept on;
 }
 
@@ -232,6 +232,7 @@ http {
                 "user_agent": "$http_user_agent",
                 "gzip_ratio": "$gzip_ratio",
                 "cache_status": "$upstream_cache_status",
+                "bad_key_and_requires_key": "$bad_key_and_requires_key",
 
                 "request_headers":
                 {
@@ -249,7 +250,8 @@ http {
                 "upstream_servers":
                 [
                     {% for name, route in routes.items() -%}
-                    {% if route.targets -%}
+                    {% set outerloop = loop %}
+                    {% if route.targets -%} {{ ", " if need_comma }}
                     {
                         "name": "{{ name }}",
                         "targets":
@@ -258,14 +260,13 @@ http {
                             {{ target.private_ip_address | jsonify }}{{ "," if not loop.last }}
                             {%- endfor %}
                         ]
-                    }{{ "," if not loop.last }}
+                    } {% set need_comma=True %}
                     {%- endif %}
                     {%- endfor %}
                 ]
             }\n';
 
         }
-
 
         location /api-router {
             index status.json;
@@ -288,7 +289,7 @@ http {
         {% for name, route in routes.items() %}
         {% if route.targets %}
         location /{{ route.api }} {
-            uwsgi_pass {{ name }}-servers;  
+            uwsgi_pass {{ name }}-servers;
             uwsgi_param  QUERY_STRING       $query_string;
             uwsgi_param  REQUEST_METHOD     $request_method;
             uwsgi_param  CONTENT_TYPE       $content_type;
@@ -311,18 +312,29 @@ http {
         location /{{ route.api }} {
             return 503 '{"status_code": 503, "message": "Service Unavailable. No targets registered."}';
         }
-        {% endif %}
-        {% endfor %}
-
-
+        {%- endif %}
+        {%- endfor %}
 
         # API product key check
+        set $bad_key "false";
         if ($product_name != $api_key_to_product) {
             set $bad_key "true";
         }
 
         set $bad_key_and_requires_key "${bad_key}:${endpoint_requires_api_key}";
 
+        {% if nginx.api_key_passthrough %}
+        {%- for passthrough in nginx.api_key_passthrough %}
+        {{ "# Pass-through for legacy keys" if loop.first }}
+        if ($http_{{ passthrough.key_name.replace('-', '_') }} ~ {{ passthrough.key_value }} ) {
+            set $bad_key_and_requires_key "letitslide";
+        }
+        {%- endfor %}
+        {%- else %}
+        # Note: No pass-through api keys defined.
+        {%- endif %}
+
+        # Bail out if key check fails
         if ($bad_key_and_requires_key = "true:true") {
             return 403
             '{"status_code": 403, "message": "Forbidden",
