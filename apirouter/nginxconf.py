@@ -197,7 +197,7 @@ def get_api_targets_from_aws(conf, deployables):
             continue
 
         if api_status != 'online2':
-            log.info("EC2 instance %s[%s] not in rotation, '%s' api-status tag is '%s'.", name, ec2.instance_id[:7], api_status)
+            log.info("EC2 instance %s[%s] not in rotation, api-status tag is '%s'.", name, ec2.instance_id[:7], api_status)
             continue
 
         target = {
