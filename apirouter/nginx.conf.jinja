@@ -36,6 +36,10 @@ http {
     # server_names_hash_bucket_size 64;
     # server_name_in_redirect off;
 
+    # A possible fix to a problem described here: 
+    # https://stackoverflow.com/questions/34768527/uwsgi-ioerror-write-error
+    uwsgi_ignore_client_abort on;
+
     include {{ plat.etc }}/nginx/mime.types;
 
 
