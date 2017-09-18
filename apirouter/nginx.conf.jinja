@@ -321,6 +321,7 @@ http {
 
         # API product key check
         set $bad_key "false";
+        set $custom_api_key "false";
 
         {% if nginx.api_key_passthrough %}
         {%- for passthrough in nginx.api_key_passthrough %}
