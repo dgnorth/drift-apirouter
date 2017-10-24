@@ -51,7 +51,12 @@ class TestNginxConfig(unittest.TestCase):
     # Some patching
     @classmethod
     def get_api_targets(cls, tier_name, region_name):
-        tags = {'api-status': 'online', 'api-target': cls.deployable_1, 'api-port': UPSTREAM_SERVER_PORT}
+        tags = {
+            'api-status': 'online',
+            'api-target': cls.deployable_1,
+            'api-port': UPSTREAM_SERVER_PORT,
+            'api-param': 'weight=100',
+        }
         targets = [
             {
                 'name': 'test instance',

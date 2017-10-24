@@ -36,7 +36,7 @@ http {
     # server_names_hash_bucket_size 64;
     # server_name_in_redirect off;
 
-    # A possible fix to a problem described here: 
+    # A possible fix to a problem described here:
     # https://stackoverflow.com/questions/34768527/uwsgi-ioerror-write-error
     uwsgi_ignore_client_abort on;
 
@@ -374,7 +374,7 @@ http {
     {% if route.targets %}
     upstream {{ name }}-servers {
         {%- for target in route.targets %}
-        server {{ target.private_ip_address}}:{{ target.tags['api-port']}};  # {{ target.comment }}
+        server {{ target.private_ip_address}}:{{ target.tags['api-port']}} {{ target.tags['api-param']}};  # {{ target.comment }}
         {%- endfor %}
     }
     {%- endif %}
