@@ -161,7 +161,6 @@ class TestNginxConfig(unittest.TestCase):
             'product_name': cls.product_name,
             'key_type': 'custom',
         })
-
         # Generate 'nginx' data
         nginx = ts.get_table('nginx')
         nginx.add({
@@ -174,7 +173,22 @@ class TestNginxConfig(unittest.TestCase):
             ],
             'worker_rlimit_nofile': 100,
             'worker_connections': 100,
+            'healthcheck_targets': True,
+            'healthcheck_port': 8901,
         })
+
+        # Run uwsgi echo server.
+        cmd = [
+            'uwsgi',
+            '--socket', ':{}'.format(UPSTREAM_SERVER_PORT),
+            '--http', ':8901',  # For the health check endpoint. Note, can't use default 8080 port because of nginx.
+            '--stats', '127.0.0.1:9191',
+            '--wsgi-file', __file__,
+            '--callable', 'simple_app',
+            '--processes', '1',
+            '--threads', '1',
+        ]
+        cls.uwsgi = subprocess.Popen(cmd)
 
         nginx_config = nginxconf.generate_nginx_config(cls.tier_name)
         ret = nginxconf.apply_nginx_config(nginx_config, skip_if_same=False)
@@ -183,15 +197,6 @@ class TestNginxConfig(unittest.TestCase):
 
         cls.key_api = '/' + cls.api_1
         cls.keyless_api = '/' + cls.api_2
-
-        # Run uwsgi echo server.
-        cmd = [
-            'uwsgi',
-            '--socket', ':{}'.format(UPSTREAM_SERVER_PORT),
-            '--wsgi-file', __file__,
-            '--callable', 'simple_app'
-        ]
-        cls.uwsgi = subprocess.Popen(cmd)
 
     @classmethod
     def tearDownClass(cls):

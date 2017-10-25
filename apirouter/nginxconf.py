@@ -14,6 +14,8 @@ import json
 import time
 
 import boto3
+import requests
+import requests.exceptions
 
 from jinja2 import Environment, PackageLoader
 from driftconfig.util import get_drift_config
@@ -40,6 +42,8 @@ else:
 
 platform['os'] = sys.platform
 
+HEALTHCHECK_TIMEOUT = 1.0  # Timeout for target health check ping.
+
 
 def _prepare_info(tier_name):
     conf = get_drift_config(tier_name=tier_name)
@@ -61,6 +65,11 @@ def _prepare_info(tier_name):
 
     # Prepare routes (or api forwarding)
     api_targets = get_api_targets(conf, deployables)
+
+    # Run health check on targets and remove dead ones
+    nginx = ts.get_table('nginx').get({'tier_name': tier_name})
+    _healthcheck_targets(api_targets, nginx)
+
     routes = {}
 
     for route in ts.get_table('routing').find():
@@ -144,6 +153,35 @@ def _prepare_info(tier_name):
     }
 
     return ret
+
+
+def _healthcheck_targets(api_targets, nginx):
+    if not nginx.get('healthcheck_targets', True):
+        log.info("Not running health checks on targets, as configured.")
+        return
+
+    healthcheck_timeout = nginx.get('healthcheck_timeout', HEALTHCHECK_TIMEOUT)
+    healthcheck_port = nginx.get('healthcheck_port', 8080)
+
+    for api_target_name, targets in api_targets.items():
+        for target in targets[:]:
+            # Ping the target for health. The assumption is that the target runs a plain
+            # http server on port 8080 and responds to /healthcheck with a 200.
+            try:
+                ret = requests.get(
+                    "http://{}:{}/healthcheck".format(target['private_ip_address'], healthcheck_port),
+                    timeout=healthcheck_timeout
+                )
+            except requests.exceptions.Timeout as e:
+                log.warning("Target %s[%s]: Healthcheck timeout: %s.", api_target_name,target['private_ip_address'], e)
+                targets.remove(target)
+            else:
+                if ret.status_code != 200:
+                    log.warning(
+                        "EC2 instance %s[%s]: Healthcheck response failure: %s: %s.",
+                        api_target_name,target['private_ip_address'], ret.status_code, ret.text
+                    )
+                    targets.remove(target)
 
 
 def get_api_targets(conf, deployables):

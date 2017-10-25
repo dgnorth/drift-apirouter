@@ -1,3 +1,4 @@
 git+https://github.com/dgnorth/drift-config@develop
 jinja2
 boto3
+requests
