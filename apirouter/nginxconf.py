@@ -167,10 +167,10 @@ def _healthcheck_targets(api_targets, nginx=None):
     for api_target_name, targets in api_targets.items():
         for target in targets[:]:
             # Ping the target for health. The assumption is that the target runs a plain
-            # http server on port 8080 and responds to /healthcheck with a 200.
+            # http server on port 8080 and responds to / with a 200.
             try:
                 ret = requests.get(
-                    "http://{}:{}/healthcheck".format(target['private_ip_address'], healthcheck_port),
+                    "http://{}:{}/".format(target['private_ip_address'], healthcheck_port),
                     timeout=healthcheck_timeout
                 )
             except requests.exceptions.Timeout as e:
