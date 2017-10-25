@@ -155,7 +155,8 @@ def _prepare_info(tier_name):
     return ret
 
 
-def _healthcheck_targets(api_targets, nginx):
+def _healthcheck_targets(api_targets, nginx=None):
+    nginx = nginx or {}
     if not nginx.get('healthcheck_targets', True):
         log.info("Not running health checks on targets, as configured.")
         return
