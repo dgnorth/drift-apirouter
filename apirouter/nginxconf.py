@@ -202,10 +202,16 @@ def get_api_targets_from_aws(conf, deployables):
         'instance-state-name': 'running',
         'tag:tier': conf.tier['tier_name'],
     }
+    ec2_instances = list(ec2.instances.filter(Filters=filterize(filters)))
+
+    # If the instances are part of an autoscaling group, make sure they are healthy and in service.
+    autoscaling = boto3.client('autoscaling', region_name=conf.tier['aws']['region'])
+    auto_ec2s = autoscaling.describe_auto_scaling_instances(InstanceIds=[ec2.instance_id for ec2 in ec2_instances])
+    auto_ec2s = {auto_ec2['InstanceId']: auto_ec2 for auto_ec2 in auto_ec2s['AutoScalingInstances']}
+    # auto_ec2s is a dict with instance id as key, and value is a dict with LifecycleState and HealthStatus key.
 
     api_targets = {}
-
-    for ec2 in ec2.instances.filter(Filters=filterize(filters)):
+    for ec2 in ec2_instances:
 
         # Analyse the EC2 instances and see if they are supposed to be a target of the api router.
         tags = fold_tags(ec2.tags)
@@ -213,6 +219,12 @@ def get_api_targets_from_aws(conf, deployables):
         api_target = tags.get('api-target')
         api_port = tags.get('api-port')
         name = tags.get('Name')
+
+        # Check if instance is being "scaled in" by autoscaling group.
+        if ec2.instance_id in auto_ec2s:
+            if auto_ec2s[ec2.instance_id]['LifecycleState'] == 'Terminating':
+                log.info("EC2 instance %s[%s] terminating. Marking it as 'backup' to drain connections.", name, ec2.instance_id[:7])
+                tags['api-param'] = 'backup'  # This will enable connection draining in Nginx.
 
         if not any([api_status, api_target, api_port]):
             log.info("EC2 instance %s[%s] not in rotation, as it's not configured as api-target.", name, ec2.instance_id[:7])
