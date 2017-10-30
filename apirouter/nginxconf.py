@@ -222,7 +222,7 @@ def get_api_targets_from_aws(conf, deployables):
 
         # Check if instance is being "scaled in" by autoscaling group.
         if ec2.instance_id in auto_ec2s:
-            if auto_ec2s[ec2.instance_id]['LifecycleState'] == 'Terminating':
+            if auto_ec2s[ec2.instance_id]['LifecycleState'].startswith('Terminating'):
                 log.info("EC2 instance %s[%s] terminating. Marking it as 'backup' to drain connections.", name, ec2.instance_id[:7])
                 tags['api-param'] = 'backup'  # This will enable connection draining in Nginx.
 
