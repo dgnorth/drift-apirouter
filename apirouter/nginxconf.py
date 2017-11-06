@@ -173,8 +173,8 @@ def _healthcheck_targets(api_targets, nginx=None):
                     "http://{}:{}/".format(target['private_ip_address'], healthcheck_port),
                     timeout=healthcheck_timeout
                 )
-            except requests.exceptions.Timeout as e:
-                log.warning("Target %s[%s]: Healthcheck timeout: %s.", api_target_name,target['private_ip_address'], e)
+            except Exception as e:
+                log.warning("Target %s[%s]: Healthcheck failed: %s.", api_target_name,target['private_ip_address'], e)
                 targets.remove(target)
             else:
                 if ret.status_code != 200:
