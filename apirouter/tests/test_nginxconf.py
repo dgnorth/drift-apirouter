@@ -135,12 +135,14 @@ class TestNginxConfig(unittest.TestCase):
         # Generate 'routing' data
         routing = ts.get_table('routing')
         routing.add({
+            'tier_name': cls.tier_name,
             'deployable_name': cls.deployable_1,
             'requires_api_key': True,
             'api': cls.api_1,
         })
 
         routing.add({
+            'tier_name': cls.tier_name,
             'deployable_name': cls.deployable_2,
             'requires_api_key': False,
             # Ommit the 'api'. The 'deployable_name' will be used as the api prefix.
