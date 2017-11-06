@@ -255,17 +255,24 @@ http {
                 [
                     {% for name, route in routes.items() -%}
                     {% set outerloop = loop %}
-                    {% if route.targets -%} {{ ", " if need_comma }}
+                    {{ ", " if need_comma }}
                     {
                         "name": "{{ name }}",
                         "targets":
                         [
                             {% for target in route.targets -%}
-                            {{ target.private_ip_address | jsonify }}{{ "," if not loop.last }}
+                            {{
+                                {
+                                    "ip_address": target.private_ip_address,
+                                    "port": target.tags['api-port'],
+                                    "param": target.tags['api-param'],
+                                    "comment": target.comment,
+                                } | jsonify
+                            }}
+                            {{ "," if not loop.last }}
                             {%- endfor %}
                         ]
                     } {% set need_comma=True %}
-                    {%- endif %}
                     {%- endfor %}
                 ]
             }\n';
