@@ -324,7 +324,16 @@ def _generate_status(data):
 
     status = {
         'deployables': deployables,
-        'products': data['products'].values(),
+        'products': [
+            {
+                'product_name': product['product_name'],
+                'organization_name': product['organization_name'],
+                'state': product['state'],
+                'deployables': product['deployables'],
+                'tenants': product['tenants'],
+            }
+            for product in data['products'].values()
+        ],
     }
 
     return json.dumps(status, indent=4)
