@@ -263,7 +263,7 @@ http {
 
         location /healthcheck {
             # For ELB health check
-            return 200 '{"status_code": 200, "message": "Healthy"}';
+            return 200 '{"status_code": 200, "message": "Healthy"}\n';
         }
 
         error_page 404 /errors/404;
@@ -275,7 +275,12 @@ http {
         # Dynamic locations:
         ##
         {% for name, route in routes.items() %}
-        {% if route.healthy_targets %}
+        # Deployable: '{{ route.deployable_name }}', active: {{ route.deployable.is_active }}
+        {%- if route.deployable.is_active == False %}
+        location /{{ route.api }} {
+            return 503 '{"status_code": 503, "message": "Service Unavailable. {{ route.deployable.reason_inactive }}"}';
+        }
+        {% elif route.healthy_targets %}
         location /{{ route.api }} {
             uwsgi_pass {{ name }}-servers;
             uwsgi_param  QUERY_STRING       $query_string;

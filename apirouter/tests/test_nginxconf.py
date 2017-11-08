@@ -50,7 +50,7 @@ class TestNginxConfig(unittest.TestCase):
 
     # Some patching
     @classmethod
-    def get_api_targets(cls, tier_name, region_name):
+    def get_api_targets(cls, tier_name, region_name, ts=None):
         tags = {
             'api-status': 'online',
             'api-target': cls.deployable_1,
@@ -75,12 +75,8 @@ class TestNginxConfig(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
 
-        cls.patchers = [
-            mock.patch('apirouter.nginxconf.get_api_targets', cls.get_api_targets),
-        ]
-
-        for patcher in cls.patchers:
-            patcher.start()
+        import driftconfig.relib
+        driftconfig.relib.CHECK_INTEGRITY = []
 
         # Create config with two deployables. The first one will have targets available (see
         # get_api_targets() above). The second one has not target but is used to test keyless
@@ -93,9 +89,6 @@ class TestNginxConfig(unittest.TestCase):
             'num_tenants': 2,
         }
 
-        import driftconfig.relib
-        driftconfig.relib.CHECK_INTEGRITY = []
-
         t = time.time()
         ts = create_test_domain(config_size)
         cls.ts = ts
@@ -104,20 +97,12 @@ class TestNginxConfig(unittest.TestCase):
         if t > 0.100:
             print "Warning: create_test_domain() took %.1f seconds." % t
 
-        if 0:
-            from driftconfig.relib import create_backend
-            from driftconfig.backends import ZipEncoded
+        cls.patchers = [
+            mock.patch('apirouter.nginxconf.get_api_targets', cls.get_api_targets, ts),
+        ]
 
-            # t = time.time()
-            # create_backend('file://~/.drift/testts').save_table_store(ts, run_integrity_check=False, file_format='json')
-            # print "WRITING json", time.time() - t
-
-            t = time.time()
-            backend = create_backend('file://~/.drift/testts')
-            for b in backend, ZipEncoded(backend):
-                b.save_table_store(ts, run_integrity_check=False, file_format='pickle')
-
-            print "WRITING pickle", time.time() - t
+        for patcher in cls.patchers:
+            patcher.start()
 
         # Extract names from config. This way there's no need to assume how the names are generated
         # by create_test_domain() function.
@@ -127,13 +112,17 @@ class TestNginxConfig(unittest.TestCase):
         cls.tenant_name_2 = ts.get_table('tenant-names').find({'product_name': cls.product_name})[1]['tenant_name']
 
         # Add api router specific config data:
-        cls.deployable_1 = ts.get_table('deployables').find()[0]['deployable_name']
-        cls.deployable_2 = ts.get_table('deployables').find()[1]['deployable_name']
-        cls.api_1 = cls.deployable_1 + '_custom'  # The route prefix name is not neccessary the same as the deployable name.
+        deployables = ts.get_table('deployables').find({'tier_name': cls.tier_name})
+        cls.deployable_1 = deployables[0]['deployable_name']
+        cls.deployable_2 = deployables[1]['deployable_name']
+        cls.deployable_3 = deployables[2]['deployable_name']
+        cls.api_1 = cls.deployable_1 + '_custom'  # The route prefix name is not neccessarily the same as the deployable name.
         cls.api_2 = cls.deployable_2
+        cls.api_3 = cls.deployable_3
 
         # Generate 'routing' data
         routing = ts.get_table('routing')
+
         routing.add({
             'tier_name': cls.tier_name,
             'deployable_name': cls.deployable_1,
@@ -147,6 +136,16 @@ class TestNginxConfig(unittest.TestCase):
             'requires_api_key': False,
             # Ommit the 'api'. The 'deployable_name' will be used as the api prefix.
         })
+
+        routing.add({
+            'tier_name': cls.tier_name,
+            'deployable_name': cls.deployable_3,
+            'requires_api_key': False,
+            # Ommit the 'api'. The 'deployable_name' will be used as the api prefix.
+        })
+        # Make deployable 3 inactive.
+        deployables[2]['is_active'] = False
+        deployables[2]['reason_inactive'] = "Testing inactive."
 
         # Generate 'api-keys' and 'api-key-rules' data
         cls.product_api_key = cls.product_name + '-99999999'
@@ -199,6 +198,7 @@ class TestNginxConfig(unittest.TestCase):
 
         cls.key_api = '/' + cls.api_1
         cls.keyless_api = '/' + cls.api_2
+        cls.inactive_api = '/' + cls.api_3
 
     @classmethod
     def tearDownClass(cls):
@@ -287,6 +287,14 @@ class TestNginxConfig(unittest.TestCase):
             ret = self.get('/api-router/request', tenant_name=tenant['tenant_name'])
             self.assertEqual(ret.json()['product_name'], tenant['product_name'])
 
+    def test_inactive_deployables(self):
+        # Deployable marked as 'is_active=False' should respond with a 503 and a custom message.
+        # versionless key.
+        ret = self.get(
+            self.inactive_api,
+            status_code=503,
+        )
+        self.assertIn("Service Unavailable. Testing inactive.", ret.json()['message'])
 
     # NOTE!!!!!!!!!! This will be moved into the flask stack!!!!!!
     @classmethod

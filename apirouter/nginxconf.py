@@ -72,7 +72,7 @@ def _prepare_info(tier_name):
             product_map[product_name] = product
             product['tenants'] = [tenant['tenant_name'] for tenant in tenants]
 
-    deployables = ts.get_table('deployables').find({'tier_name': tier_name, 'is_active': True})
+    deployables = ts.get_table('deployables').find({'tier_name': tier_name})
     deployables = {d['deployable_name']: d for d in deployables}  # Turn into a dict
 
     # Prepare routes (or api forwarding)
@@ -90,6 +90,8 @@ def _prepare_info(tier_name):
         routes[deployable_name].setdefault('api', deployable_name)  # Makes it easier for the template code.
         routes[deployable_name]['targets'] = api_targets.get(deployable_name, [])
         routes[deployable_name]['healthy_targets'] = healthy_targets.get(deployable_name, [])
+        routes[deployable_name]['deployable'] = ts.get_table('deployables').get(
+            {'tier_name': tier_name, 'deployable_name': deployable_name})
 
 
     # Example of product and custom key:
@@ -269,10 +271,6 @@ def get_api_targets_from_aws(conf, deployables):
             log.warning("EC2 instance %s[%s]: No deployable defined for api-target '%s'.", name, ec2.instance_id[:7], api_target)
             continue
 
-        if not deployable['is_active']:
-            log.info("EC2 instance %s[%s] not in rotation, as '%s' is configured as inactive.", name, ec2.instance_id[:7], api_target)
-            continue
-
         if api_status not in ['online', 'online2']:
             log.info("EC2 instance %s[%s] not in rotation, api-status tag is '%s'.", name, ec2.instance_id[:7], api_status)
             continue
@@ -300,13 +298,15 @@ def get_api_targets_from_aws(conf, deployables):
 
 
 def _generate_status(data):
-    # Make a pretty summary of routes, upstream servers and products.
+    # Make a pretty summary of services, routes, upstream servers and products.
     deployables = []
+
     for name, route in data['routes'].items():
         service = {
             'name': name,
             'api': route['api'],
             'requires_api_key': route['requires_api_key'],
+            'is_active': route['deployable']['is_active'],
             'upstream_servers': [
                 [
                     {
@@ -320,6 +320,9 @@ def _generate_status(data):
                 for target in route['targets']
             ]
         }
+        if not service['is_active'] and 'reason_inactive' in route['deployable']:
+            service['reason_inactive'] = route['deployable']['reason_inactive']
+
         deployables.append(service)
 
     status = {
