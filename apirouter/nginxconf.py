@@ -7,6 +7,7 @@ Use 'brew install nginx-full --with-realip' to install it.
 See https://github.com/Homebrew/homebrew-nginx and https://homebrew-nginx.marcqualie.com/
 """
 import os
+import os.path
 import sys
 import logging
 import subprocess
@@ -28,6 +29,7 @@ if sys.platform.startswith("linux"):
         'etc': '/etc',
         'pid': '/run/nginx.pid',
         'log': '/var/log',
+        'root': '/usr/share/nginx',
         'nginx_config': '/etc/nginx/nginx.conf',
     }
 elif sys.platform == 'darwin':
@@ -35,6 +37,7 @@ elif sys.platform == 'darwin':
         'etc': '/usr/local/etc',
         'pid': '/usr/local/var/run/nginx.pid',
         'log': '/usr/local/var/log',
+        'root': '/usr/local/share/nginx',
         'nginx_config': '/usr/local/etc/nginx/nginx.conf',
     }
 else:
@@ -60,15 +63,24 @@ def _prepare_info(tier_name):
         if product['state'] == 'active':
             tenant_map[tenant['tenant_name']] = product
 
+    # Make a product map that includes all its tenants, for convenience
+    product_map = {}
+    for product in ts.get_table('products').find():
+        product_name = product['product_name']
+        tenants = ts.get_table('tenant-names').find({'product_name': product_name})
+        if tenants:
+            product_map[product_name] = product
+            product['tenants'] = [tenant['tenant_name'] for tenant in tenants]
+
     deployables = ts.get_table('deployables').find({'tier_name': tier_name, 'is_active': True})
     deployables = {d['deployable_name']: d for d in deployables}  # Turn into a dict
 
     # Prepare routes (or api forwarding)
     api_targets = get_api_targets(conf, deployables)
 
-    # Run health check on targets and remove dead ones
+    # Run health check on targets
     nginx = ts.get_table('nginx').get({'tier_name': tier_name})
-    _healthcheck_targets(api_targets, nginx)
+    healthy_targets = _healthcheck_targets(api_targets, nginx)
 
     routes = {}
 
@@ -77,6 +89,7 @@ def _prepare_info(tier_name):
         routes[deployable_name] = route.copy()
         routes[deployable_name].setdefault('api', deployable_name)  # Makes it easier for the template code.
         routes[deployable_name]['targets'] = api_targets.get(deployable_name, [])
+        routes[deployable_name]['healthy_targets'] = healthy_targets.get(deployable_name, [])
 
 
     # Example of product and custom key:
@@ -147,6 +160,7 @@ def _prepare_info(tier_name):
     ret = {
         'conf': conf,
         'tenants': tenant_map,
+        'products': product_map,
         'routes': routes,
         'nginx': nginx,
         'plat': platform,
@@ -156,6 +170,7 @@ def _prepare_info(tier_name):
 
 
 def _healthcheck_targets(api_targets, nginx=None):
+    """Pings targets in 'api_targets' for health and removes a new map of 'healhty_targets' as a result."""
     nginx = nginx or {}
     if not nginx.get('healthcheck_targets', True):
         log.info("Not running health checks on targets, as configured.")
@@ -163,26 +178,37 @@ def _healthcheck_targets(api_targets, nginx=None):
 
     healthcheck_timeout = nginx.get('healthcheck_timeout', HEALTHCHECK_TIMEOUT)
     healthcheck_port = nginx.get('healthcheck_port', 8080)
+    healthy_targets = {}
 
     for api_target_name, targets in api_targets.items():
+        healthy_targets[api_target_name] = []
         for target in targets[:]:
             # Ping the target for health. The assumption is that the target runs a plain
             # http server on port 8080 and responds to / with a 200.
+            healthy = False
             try:
                 ret = requests.get(
                     "http://{}:{}/".format(target['private_ip_address'], healthcheck_port),
                     timeout=healthcheck_timeout
                 )
             except Exception as e:
-                log.warning("Target %s[%s]: Healthcheck failed: %s.", api_target_name,target['private_ip_address'], e)
-                targets.remove(target)
+                log.warning("Target %s[%s]: Healthcheck failed: %s.", api_target_name, target['private_ip_address'], e)
+                target['health_status'] = str(e)
             else:
                 if ret.status_code != 200:
                     log.warning(
                         "EC2 instance %s[%s]: Healthcheck response failure: %s: %s.",
-                        api_target_name,target['private_ip_address'], ret.status_code, ret.text
+                        api_target_name, target['private_ip_address'], ret.status_code, ret.text
                     )
-                    targets.remove(target)
+                    target['health_status'] = u"{}: {}".format(ret.status_code, ret.text)
+                else:
+                    healthy = True
+
+            if healthy:
+                target['health_status'] = 'ok'
+                healthy_targets[api_target_name].append(target)
+
+    return healthy_targets
 
 
 def get_api_targets(conf, deployables):
@@ -247,7 +273,7 @@ def get_api_targets_from_aws(conf, deployables):
             log.info("EC2 instance %s[%s] not in rotation, as '%s' is configured as inactive.", name, ec2.instance_id[:7], api_target)
             continue
 
-        if api_status != 'online2':
+        if api_status not in ['online', 'online2']:
             log.info("EC2 instance %s[%s] not in rotation, api-status tag is '%s'.", name, ec2.instance_id[:7], api_status)
             continue
 
@@ -273,17 +299,59 @@ def get_api_targets_from_aws(conf, deployables):
     return api_targets
 
 
+def _generate_status(data):
+    # Make a pretty summary of routes, upstream servers and products.
+    deployables = []
+    for name, route in data['routes'].items():
+        service = {
+            'name': name,
+            'api': route['api'],
+            'requires_api_key': route['requires_api_key'],
+            'upstream_servers': [
+                [
+                    {
+                        'address': "{}:{}".format(target['private_ip_address'], target['tags']['api-port']),
+                        'status': target['tags']['api-status'],
+                        'health': target['health_status'],
+                        'version': target['tags'].get('drift:manifest:version'),
+                        ##'tags': target['tags'],
+                    }
+                ]
+                for target in route['targets']
+            ]
+        }
+        deployables.append(service)
+
+    status = {
+        'deployables': deployables,
+        'products': data['products'].values(),
+    }
+
+    return json.dumps(status, indent=4)
+
+
 def generate_nginx_config(tier_name):
     data = _prepare_info(tier_name=tier_name)
     env = Environment(loader=PackageLoader('apirouter', ''))
-    env.filters['jsonify'] = json.dumps
-    template = env.get_template('nginx.conf.jinja')
-    nginx_config_text = template.render(**data)
-    return {'config': nginx_config_text, 'data': data}
+    env.filters['jsonify'] = lambda ob: json.dumps(ob, indent=4)
+    ret = {
+        'config': env.get_template('nginx.conf.jinja').render(**data),
+        'data': data,
+        'status': _generate_status(data),
+    }
+
+    return ret
 
 
 def apply_nginx_config(nginx_config, skip_if_same=True):
     """Apply the Nginx config on the local machine and trigger a reload."""
+    if 'status' in nginx_config:
+        status_folder = os.path.join(platform['root'], 'api-router')
+        if not os.path.exists(status_folder):
+            os.makedirs(status_folder)
+        with open(os.path.join(platform['root'], 'api-router', 'status.json'), 'w') as f:
+            f.write(nginx_config['status'])
+
     with open(platform['nginx_config'], 'r') as f:
         if nginx_config['config'] == f.read() and skip_if_same:
             return "skipped"

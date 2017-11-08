@@ -194,8 +194,7 @@ http {
         #limit_req zone=global burst=250;
         #limit_req zone=per_client burst=250;
 
-        # TODO: Make sure this jives with both linux and osx
-        root /usr/local/share/nginx;
+        root '{{ plat.root }}';
 
         # return 201 '{"hello": "there"}';
         # return 202 '{"hello": "there"}';
@@ -249,32 +248,7 @@ http {
                     "Upgrade-Insecure-Requests": "$http_insecure_requests",
                     "User-Agent": "$http_user_agent",
                     "Drift-Api-Key": "$http_drift_api_key"
-                },
-
-                "upstream_servers":
-                [
-                    {% for name, route in routes.items() -%}
-                    {% set outerloop = loop %}
-                    {{ ", " if need_comma }}
-                    {
-                        "name": "{{ name }}",
-                        "targets":
-                        [
-                            {% for target in route.targets -%}
-                            {{
-                                {
-                                    "ip_address": target.private_ip_address,
-                                    "port": target.tags['api-port'],
-                                    "param": target.tags['api-param'],
-                                    "comment": target.comment,
-                                } | jsonify
-                            }}
-                            {{ "," if not loop.last }}
-                            {%- endfor %}
-                        ]
-                    } {% set need_comma=True %}
-                    {%- endfor %}
-                ]
+                }
             }\n';
 
         }
@@ -282,6 +256,9 @@ http {
         location /api-router {
             index status.json;
             #add_header 'Access-Control-Allow-Origin' '*';
+            if (-d $request_filename) {
+                rewrite [^/]$ $http_x_forwarded_proto://$http_host$uri/ permanent;
+            }
         }
 
         location /healthcheck {
@@ -298,7 +275,7 @@ http {
         # Dynamic locations:
         ##
         {% for name, route in routes.items() %}
-        {% if route.targets %}
+        {% if route.healthy_targets %}
         location /{{ route.api }} {
             uwsgi_pass {{ name }}-servers;
             uwsgi_param  QUERY_STRING       $query_string;
@@ -363,24 +340,10 @@ http {
         }
     }
 
-    {%- if False %}
-    ##
-    # Upstream servers:
-    ##
-    # Example of 'routes' info:
-    # routes = [
-    #     "tier_name": "TIERNAME",
-    #     "deployable_name": "deployable",
-    #     "api": "deployapi",
-    #     "requires_api_key": True,
-    #     "targets": [{"name": "x", "private_ip_address": "1.2.3.4", "tags": {...}}]
-    # ]
-    {%- endif %}
-
-    {% for name, route in routes.items() %}
-    {% if route.targets %}
+    {%- for name, route in routes.items() %}
+    {% if route.healthy_targets %}
     upstream {{ name }}-servers {
-        {%- for target in route.targets %}
+        {%- for target in route.healthy_targets %}
         server {{ target.private_ip_address}}:{{ target.tags['api-port']}} {{ target.tags['api-param']}};  # {{ target.comment }}
         {%- endfor %}
     }
