@@ -1,3 +1,4 @@
 {
-    "name": "drift-apirouter"
+    "name": "drift-apirouter",
+    "service_type": "api-router"
 }
