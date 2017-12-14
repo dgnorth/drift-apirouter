@@ -280,7 +280,7 @@ class TestNginxConfig(unittest.TestCase):
 
     def test_name_mapping(self):
         # Make sure the tenant name can be mapped to a product.
-        for tenant in self.ts.get_table('tenant-names').find():
+        for tenant in self.ts.get_table('tenant-names').find({'tier_name': self.tier_name}):
             # Skip over cls.product_name because it has all kinds of api rules associated with it.
             if tenant['product_name'] == self.product_name:
                 continue
