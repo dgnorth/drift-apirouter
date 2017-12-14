@@ -1,3 +1,5 @@
+sudo: true
+language: python
 python:
 - 2.7
 cache: pip
@@ -5,7 +7,6 @@ install:
 - pip install codecov
 - pip install cov-core
 - pip install nose2
-
 script:
 - nose2 --log-level=CRITICAL  --with-coverage
 after_success:
