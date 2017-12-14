@@ -8,6 +8,7 @@ install:
 - pip install cov-core
 - pip install nose2
 - pip install git+https://github.com/dgnorth/drift-config@develop
+- pip install uwsgi
 script:
 - nose2 --log-level=CRITICAL  --with-coverage
 after_success:
