@@ -10,6 +10,6 @@ install:
 - pip install git+https://github.com/dgnorth/drift-config@develop
 - pip install uwsgi
 script:
-- sudo nose2 --log-level=CRITICAL  --with-coverage
+- sudo $(which nose2) --log-level=CRITICAL  --with-coverage
 after_success:
  - codecov
