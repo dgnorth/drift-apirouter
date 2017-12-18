@@ -159,7 +159,6 @@ class TestNginxConfig(unittest.TestCase):
         })
         api_keys.add({
             'api_key_name': cls.custom_api_key,
-            'product_name': cls.product_name,
             'key_type': 'custom',
         })
         # Generate 'nginx' data
@@ -350,6 +349,12 @@ class TestNginxConfig(unittest.TestCase):
             status_code=403,
         )
         self.assertDictContainsSubset({"code": "api_key_missing"}, ret.json()['error'])
+
+    def test_custom_key_access(self):
+        self.kget(
+            self.key_api,
+            status_code=200,
+        )
 
     def test_api_key_passthrough(self):
         # Test passthrough

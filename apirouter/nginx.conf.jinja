@@ -122,7 +122,11 @@ http {
 
         # API keys from config:
         {%- for key in conf.table_store.get_table('api-keys').find({'in_use': True}) %}
+        {% if 'product_name' in key %}
         {{ key.api_key_name }}  {{ key.product_name }};
+        {% else %}
+        {{ key.api_key_name }}  _custom_api_key;
+        {% endif %}
         {%- endfor %}
     }
 
@@ -326,6 +330,10 @@ http {
 
         if ($product_name != $api_key_to_product) {
             set $bad_key "true";
+        }
+
+        if ($api_key_to_product = '_custom_api_key') {
+            set $bad_key "false";
         }
 
         set $bad_key_and_requires_key "${bad_key}:${endpoint_requires_api_key}";
