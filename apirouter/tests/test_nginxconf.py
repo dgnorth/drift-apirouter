@@ -1,14 +1,13 @@
 # -*- coding: utf-8 -*-
+import sys
 import time
 import unittest
 import requests
 import httplib
 import mock
 from wsgiref.util import setup_testing_defaults
-from wsgiref.simple_server import make_server
 import subprocess
 import json
-import getpass
 
 from driftconfig.testhelpers import create_test_domain
 
@@ -179,7 +178,7 @@ class TestNginxConfig(unittest.TestCase):
 
         # Run uwsgi echo server.
         cmd = [
-            'uwsgi',
+            '$(which uwsgi)' if sys.platform.startswith("linux") else 'uwsgi',
             '--socket', ':{}'.format(UPSTREAM_SERVER_PORT),
             '--http', ':8901',  # For the health check endpoint. Note, can't use default 8080 port because of nginx.
             '--stats', '127.0.0.1:9191',
