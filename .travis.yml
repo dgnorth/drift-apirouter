@@ -6,6 +6,7 @@ cache: pip
 install:
 - sudo apt-get install -y -q python-dev python-pip
 - pip install codecov
+- pip install coverage
 - pip install cov-core
 - pip install nose2
 - pip install git+https://github.com/dgnorth/drift-config@develop
