@@ -184,7 +184,7 @@ class TestNginxConfig(unittest.TestCase):
             raise RuntimeError("Can't continue without uwsgi executable.")
 
         cmd = [
-            uwsgi_exe,
+            'uwsgi',
             '--socket', ':{}'.format(UPSTREAM_SERVER_PORT),
             '--http', ':8901',  # For the health check endpoint. Note, can't use default 8080 port because of nginx.
             '--stats', '127.0.0.1:9191',
