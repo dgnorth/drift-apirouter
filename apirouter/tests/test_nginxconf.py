@@ -38,14 +38,11 @@ def simple_app(environ, start_response):
     start_response(status, headers)
     ret = json.dumps({"test_target": "ok"}, indent=4)
     req = '{REQUEST_METHOD} http://{HTTP_HOST}{REQUEST_URI}{QUERY_STRING}'.format(**environ)
-    print "UWSGI request:", req
-    if 'HTTP_DRIFT_API_KEY' in environ:
-        print "HTTP_DRIFT_API_KEY:", environ['HTTP_DRIFT_API_KEY']
+    print "UWSGI request: {} (key={}).".format(req, environ.get('HTTP_DRIFT_API_KEY'))
     return ret
 
 
 class TestNginxConfig(unittest.TestCase):
-
 
     # Some patching
     @classmethod
@@ -70,7 +67,6 @@ class TestNginxConfig(unittest.TestCase):
 
         return {cls.deployable_1: targets}
 
-
     @classmethod
     def setUpClass(cls):
 
@@ -90,18 +86,23 @@ class TestNginxConfig(unittest.TestCase):
 
         t = time.time()
         ts = create_test_domain(config_size)
-        cls.ts = ts
-
         t = time.time() - t
         if t > 0.100:
             print "Warning: create_test_domain() took %.1f seconds." % t
 
+        cls.ts = ts
         cls.patchers = [
             mock.patch('apirouter.nginxconf.get_api_targets', cls.get_api_targets, ts),
         ]
 
         for patcher in cls.patchers:
             patcher.start()
+
+        # Toggling the status of all tenants from 'initializing' to 'active'. This is normally
+        # done by the tenant provisioning logic but we don't want to run that if we don't
+        # need to.
+        for tenant in ts.get_table('tenants').find():
+            tenant['state'] = 'active'
 
         # Extract names from config. This way there's no need to assume how the names are generated
         # by create_test_domain() function.
@@ -190,6 +191,17 @@ class TestNginxConfig(unittest.TestCase):
         cls.uwsgi = subprocess.Popen(cmd)
 
         nginx_config = nginxconf.generate_nginx_config(cls.tier_name)
+        if 0:
+            print "Using nginx.conf:"
+            # Pretty print config
+            try:
+                import pygments
+                lexerob = pygments.lexers.get_lexer_by_name('nginx')
+                formatter = pygments.formatters.get_formatter_by_name('console256', style='tango')
+                print pygments.highlight(nginx_config['config'], lexerob, formatter)
+            except ImportError:
+                print nginx_config['config']
+
         ret = nginxconf.apply_nginx_config(nginx_config, skip_if_same=False)
         if ret != 0:
             raise RuntimeError("Failed to set up test, apply_nginx_config() returned with {}.".format(ret))
@@ -241,7 +253,8 @@ class TestNginxConfig(unittest.TestCase):
         elif status_code == 'ignore':
             pass
         else:
-            self.assertEqual(status_code, ret.status_code)
+            msg = "{} != {}: {}Header: {}".format(status_code, ret.status_code, ret.text, headers)
+            self.assertEqual(status_code, ret.status_code, msg=msg)
 
         return ret
 
@@ -260,10 +273,11 @@ class TestNginxConfig(unittest.TestCase):
 
     def test_api_key_missing(self):
         ret = self.get('/testing-key-missing/some-path', status_code=httplib.FORBIDDEN)
-        self.assertEqual(ret.json()['error']['code'], 'api_key_missing')
+        self.assertEqual(ret.json()['error']['code'], 'api_key_error')
+        self.assertIn("API key not found.", ret.json()['error']['description'])
 
     def test_api_router_endpoint(self):
-        ret = self.get('/api-router/')
+        self.get('/api-router/')
 
     def test_not_found(self):
         self.get('/api-router/not/found', status_code=httplib.NOT_FOUND)
@@ -339,7 +353,8 @@ class TestNginxConfig(unittest.TestCase):
             tenant_name=self.tenant_name_1,
             status_code=403,
         )
-        self.assertDictContainsSubset({"code": "api_key_missing"}, ret.json()['error'])
+        self.assertDictContainsSubset({"code": "api_key_error"}, ret.json()['error'])
+        self.assertIn("API key not found.", ret.json()['error']['description'])
 
         ret = self.get(
             self.key_api,
@@ -347,7 +362,8 @@ class TestNginxConfig(unittest.TestCase):
             tenant_name=self.tenant_name_1,
             status_code=403,
         )
-        self.assertDictContainsSubset({"code": "api_key_missing"}, ret.json()['error'])
+        self.assertDictContainsSubset({"code": "api_key_error"}, ret.json()['error'])
+        self.assertIn("API key not found.", ret.json()['error']['description'])
 
     def test_custom_key_access(self):
         self.kget(
@@ -380,8 +396,8 @@ class TestNginxConfig(unittest.TestCase):
             tenant_name=self.tenant_name_1,
             status_code=403,
         )
-        self.assertDictContainsSubset({"code": "api_key_missing"}, ret.json()['error'])
-        self.assertEqual(ret.json()['error']['description'], "API key does not match the given product.")
+        self.assertDictContainsSubset({"code": "api_key_error"}, ret.json()['error'])
+        self.assertIn("API key is for", ret.json()['error']['description'])
 
         # Test bad key and requires key flags in the nginx config itself.
         ret = self.get('/api-router/request')

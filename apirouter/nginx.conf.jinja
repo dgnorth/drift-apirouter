@@ -330,6 +330,11 @@ http {
 
         if ($product_name != $api_key_to_product) {
             set $bad_key "true";
+            set $reason "API key is for '${api_key_to_product}' but tenant is for product '${product_name}'.";
+        }
+
+        if ($api_key_to_product = "_api key not found") {
+            set $reason  "API key not found.";
         }
 
         if ($api_key_to_product = '_custom_api_key') {
@@ -337,19 +342,13 @@ http {
         }
 
         set $bad_key_and_requires_key "${bad_key}:${endpoint_requires_api_key}";
-        set $custom_key_product_mismatch "${bad_key}:${endpoint_requires_api_key}:${custom_api_key}";
-
-        if ($custom_key_product_mismatch = "true:true:true") {
-            return 403
-            '{"status_code": 403, "message": "Forbidden",
-            "error": {"code": "api_key_missing", "description": "API key does not match the given product."}}\n';
-        }
 
         # Bail out if key check fails
         if ($bad_key_and_requires_key = "true:true") {
             return 403
             '{"status_code": 403, "message": "Forbidden",
-            "error": {"code": "api_key_missing", "description": "API key is missing or unknown."}}\n';
+            "error": {"code": "api_key_error",
+            "description": "${reason}"}}\n';
         }
     }
 
