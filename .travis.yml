@@ -4,6 +4,10 @@ sudo: required
 python:
 - 2.7
 cache: pip
+addons:
+  apt:
+    packages:
+    - nginx
 before_install:
 - sudo mkdir /usr/share/nginx
 - sudo chown $(whoami) /usr/share/nginx
