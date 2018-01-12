@@ -364,9 +364,10 @@ def apply_nginx_config(nginx_config, skip_if_same=True):
         with open(os.path.join(platform['root'], 'api-router', 'status.json'), 'w') as f:
             f.write(nginx_config['status'])
 
-    with open(platform['nginx_config'], 'r') as f:
-        if nginx_config['config'] == f.read() and skip_if_same:
-            return "skipped"
+    if os.path.exists(platform['nginx_config']):
+        with open(platform['nginx_config'], 'r') as f:
+            if nginx_config['config'] == f.read() and skip_if_same:
+                return "skipped"
 
     with open(platform['nginx_config'], 'w') as f:
         f.write(nginx_config['config'])
