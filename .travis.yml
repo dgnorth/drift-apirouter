@@ -4,21 +4,20 @@ sudo: required
 python:
 - 2.7
 cache: pip
-addons:
-  apt:
-    packages:
-      - nginx
+before_install:
+- sudo mkdir /usr/share/nginx
+- sudo chown $(whoami) /usr/share/nginx
+- sudo mkdir /etc/nginx
+- sudo chown $(whoami) /etc/nginx
+
 install:
- - sudo apt-get install -y -q python-dev python-pip
- - pip install codecov
- - pip install cov-core
- - pip install nose2
- - pip install git+https://github.com/dgnorth/drift-config@develop
- - pip install uwsgi
+- sudo apt-get install -y -q python-dev python-pip
+- pip install codecov
+- pip install cov-core
+- pip install nose2
+- pip install git+https://github.com/dgnorth/drift-config@develop
+- pip install uwsgi
 script:
- - sudo mkdir /usr/share/nginx
- - sudo chown $(whoami) /usr/share/nginx
- - sudo chown $(whoami) /etc/nginx/nginx.conf
  - coverage run -m pytest
 after_success:
  - codecov
