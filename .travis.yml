@@ -12,7 +12,7 @@ install:
 - pip install git+https://github.com/dgnorth/drift-config@develop
 - pip install uwsgi
 script:
- - coverage run -m pytest
+ - sudo nose2
 after_success:
  - codecov
  - coverage report
