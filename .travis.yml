@@ -10,7 +10,7 @@ addons:
     - nginx
 before_install:
 - sudo chown $(whoami) /usr/share/nginx
-- sudo chown $(whoami) /etc/nginx
+- sudo chown $(whoami) /etc/nginx/nginx.conf
 
 install:
 - sudo apt-get install -y -q python-dev python-pip
