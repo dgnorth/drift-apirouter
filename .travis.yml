@@ -9,7 +9,6 @@ addons:
     packages:
     - nginx
 before_install:
-- sudo mkdir /usr/share/nginx
 - sudo chown $(whoami) /usr/share/nginx
 - sudo chown $(whoami) /etc/nginx
 
