@@ -5,6 +5,7 @@ python:
 - 2.7
 cache: pip
 before_install:
+- sudo mkdir /usr/share/nginx
 - sudo chown $(whoami) /usr/share/nginx
 install:
 - sudo apt-get install -y -q python-dev python-pip
