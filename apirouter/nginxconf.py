@@ -86,13 +86,14 @@ def _prepare_info(tier_name):
 
     for route in ts.get_table('routing').find():
         deployable_name = route['deployable_name']
-        routes[deployable_name] = route.copy()
-        routes[deployable_name].setdefault('api', deployable_name)  # Makes it easier for the template code.
-        routes[deployable_name]['targets'] = api_targets.get(deployable_name, [])
-        routes[deployable_name]['healthy_targets'] = healthy_targets.get(deployable_name, [])
-        routes[deployable_name]['deployable'] = ts.get_table('deployables').get(
+        deployable = ts.get_table('deployables').get(
             {'tier_name': tier_name, 'deployable_name': deployable_name})
-
+        if deployable is not None:
+            routes[deployable_name] = route.copy()
+            routes[deployable_name].setdefault('api', deployable_name)  # Makes it easier for the template code.
+            routes[deployable_name]['targets'] = api_targets.get(deployable_name, [])
+            routes[deployable_name]['healthy_targets'] = healthy_targets.get(deployable_name, [])
+            routes[deployable_name]['deployable'] = deployable
 
     # Example of product and custom key:
     '''
