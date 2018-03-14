@@ -406,8 +406,7 @@ def cli():
 if __name__ == '__main__':
     logging.basicConfig(level='WARNING')
     nginx_config = generate_nginx_config(tier_name=os.environ['DRIFT_TIER'])
-    from drift.utils import pretty
-    print pretty(nginx_config['config'], lexer='nginx')
+    print nginx_config['config']
     subset = nginx_config['data'].copy()
     del subset['conf']
-    print pretty(subset)
+    print subset
