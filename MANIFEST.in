@@ -1,4 +1,6 @@
 include apirouter/nginx.conf.jinja
 include requirements.txt
-recursive-include scripts/*
+recursive-include scripts *
 recursive-include config *
+include Pipfile
+include Pipfile.lock
