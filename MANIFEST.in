@@ -1,6 +1,8 @@
 include apirouter/nginx.conf.jinja
-include requirements.txt
 recursive-include scripts *
 recursive-include config *
+recursive-include aws *
+include VERSION
+include setup.py
 include Pipfile
 include Pipfile.lock
