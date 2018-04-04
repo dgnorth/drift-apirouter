@@ -252,6 +252,15 @@ def get_api_targets_from_aws(conf, deployables):
         # Check if instance is being "scaled in" by autoscaling group.
         if ec2.instance_id in auto_ec2s:
             if auto_ec2s[ec2.instance_id]['LifecycleState'].startswith('Terminating'):
+                # The instances are normally equipped with a lifecycle hook that specifies
+                # 2 minute timeout before they are terminated. The 'LivecycleState' value
+                # is "Terminating:Waiting" during this transition.
+                # The timeout can be extended by by calling record_lifecycle_action_heartbeat()
+                # on the lifecycle hook. Example:
+                # boto3.client('autoscaling).record_lifecycle_action_heartbeat(...)
+                #
+                # To gracefully drain the connections, the instance is marked as 'backup'. This
+                # simply removes the instance from the round robin load balancing.
                 log.info("EC2 instance %s[%s] terminating. Marking it as 'backup' to drain connections.", name, ec2.instance_id[:7])
                 tags['api-param'] = 'backup'  # This will enable connection draining in Nginx.
 
