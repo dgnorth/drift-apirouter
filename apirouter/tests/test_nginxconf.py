@@ -4,7 +4,7 @@ import os
 import time
 import unittest
 import requests
-import httplib
+import http.client
 import mock
 from wsgiref.util import setup_testing_defaults
 import subprocess
@@ -39,7 +39,7 @@ def simple_app(environ, start_response):
     start_response(status, headers)
     ret = json.dumps({"test_target": "ok"}, indent=4)
     req = '{REQUEST_METHOD} http://{HTTP_HOST}{REQUEST_URI}{QUERY_STRING}'.format(**environ)
-    print "UWSGI request: {} (key={}).".format(req, environ.get('HTTP_DRIFT_API_KEY'))
+    print("UWSGI request: {} (key={}).".format(req, environ.get('HTTP_DRIFT_API_KEY')))
     return ret
 
 
@@ -63,7 +63,7 @@ class TestNginxConfig(unittest.TestCase):
                 'tags': tags,
                 'placement': {'AvailabilityZone': 'test-zone-1a'}, 'comment': "SOMETIER-drift-base [t2.small] [eu-west-1b]"
             }
-            for i in xrange(3)
+            for i in range(3)
         ]
 
         return {cls.deployable_1: targets}
@@ -89,7 +89,7 @@ class TestNginxConfig(unittest.TestCase):
         ts = create_test_domain(config_size)
         t = time.time() - t
         if t > 0.100:
-            print "Warning: create_test_domain() took %.1f seconds." % t
+            print("Warning: create_test_domain() took %.1f seconds." % t)
 
         cls.ts = ts
         cls.patchers = [
@@ -197,15 +197,15 @@ class TestNginxConfig(unittest.TestCase):
 
         nginx_config = nginxconf.generate_nginx_config(cls.tier_name)
         if 0:
-            print "Using nginx.conf:"
+            print("Using nginx.conf:")
             # Pretty print config
             try:
                 import pygments
                 lexerob = pygments.lexers.get_lexer_by_name('nginx')
                 formatter = pygments.formatters.get_formatter_by_name('console256', style='tango')
-                print pygments.highlight(nginx_config['config'], lexerob, formatter)
+                print(pygments.highlight(nginx_config['config'], lexerob, formatter))
             except ImportError:
-                print nginx_config['config']
+                print(nginx_config['config'])
 
         ret = nginxconf.apply_nginx_config(nginx_config, skip_if_same=False)
         if ret != 0:
@@ -247,9 +247,9 @@ class TestNginxConfig(unittest.TestCase):
                 try:
                     ret.json()
                 except Exception as e:
-                    print "Badly formatted json or no json at all:"
-                    print e
-                    print ret.text
+                    print("Badly formatted json or no json at all:")
+                    print(e)
+                    print(ret.text)
                     raise
 
         # Assert proper status code.
@@ -273,11 +273,11 @@ class TestNginxConfig(unittest.TestCase):
         http_url = 'http://{}:{}{}'.format(HOST, REDIR_PORT, path_query_fragment)
         https_url = 'https://{}:{}{}'.format(REQUEST_HOST, PORT, path_query_fragment)
         ret = requests.get(http_url, headers=HOST_HEADER, allow_redirects=False)
-        self.assertEqual(ret.status_code, httplib.MOVED_PERMANENTLY)  # 301
+        self.assertEqual(ret.status_code, http.client.MOVED_PERMANENTLY)  # 301
         self.assertEqual(ret.headers['Location'], https_url)
 
     def test_api_key_missing(self):
-        ret = self.get('/testing-key-missing/some-path', status_code=httplib.FORBIDDEN)
+        ret = self.get('/testing-key-missing/some-path', status_code=http.client.FORBIDDEN)
         self.assertEqual(ret.json()['error']['code'], 'api_key_error')
         self.assertIn("API key not found.", ret.json()['error']['description'])
 
@@ -285,7 +285,7 @@ class TestNginxConfig(unittest.TestCase):
         self.get('/api-router/')
 
     def test_not_found(self):
-        self.get('/api-router/not/found', status_code=httplib.NOT_FOUND)
+        self.get('/api-router/not/found', status_code=http.client.NOT_FOUND)
 
     def test_healthcheck(self):
         self.get('/healthcheck')

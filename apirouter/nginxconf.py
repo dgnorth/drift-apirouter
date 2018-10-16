@@ -272,7 +272,7 @@ def get_api_targets_from_aws(conf, deployables):
             log.warning("EC2 instance %s[%s] must define all api tags, not just some: %s.", name, ec2.instance_id[:7], tags)
             continue
 
-        if not unicode(api_port).isnumeric():
+        if not api_port.isnumeric():
             log.warning("EC2 instance %s[%s] has bogus 'api-port' tag: %s.", name, ec2.instance_id[:7], api_port)
             continue
 
@@ -407,15 +407,15 @@ def cli():
     nginx_config = generate_nginx_config(tier_name=os.environ['DRIFT_TIER'])
     ret = apply_nginx_config(nginx_config)
     if ret == "skipped":
-        print "No change detected."
+        print("No change detected.")
     else:
-        print "New config applied."
+        print("New config applied.")
 
 
 if __name__ == '__main__':
     logging.basicConfig(level='WARNING')
     nginx_config = generate_nginx_config(tier_name=os.environ['DRIFT_TIER'])
-    print nginx_config['config']
+    print(nginx_config['config'])
     subset = nginx_config['data'].copy()
     del subset['conf']
-    print subset
+    print(subset)
