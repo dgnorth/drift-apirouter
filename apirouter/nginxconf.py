@@ -14,12 +14,9 @@ import subprocess
 import json
 import time
 
-import boto3
-import requests
-import requests.exceptions
-
 from jinja2 import Environment, PackageLoader
 from driftconfig.util import get_drift_config
+from apirouter.awstargets import healthcheck_targets, get_api_targets_from_aws
 
 log = logging.getLogger(__name__)
 
@@ -80,7 +77,16 @@ def _prepare_info(tier_name):
 
     # Run health check on targets
     nginx = ts.get_table('nginx').get({'tier_name': tier_name})
-    healthy_targets = _healthcheck_targets(api_targets, nginx)
+    if nginx.get('healthcheck_targets', True):
+        healthcheck_timeout = nginx.get('healthcheck_timeout', HEALTHCHECK_TIMEOUT)
+        healthcheck_port = nginx.get('healthcheck_port', 8080)
+        healthy_targets = healthcheck_targets(
+            api_targets=api_targets,
+            healthcheck_timeout=healthcheck_timeout,
+            healthcheck_port=healthcheck_port
+        )
+    else:
+        healthy_targets = {}
 
     routes = {}
 
@@ -172,139 +178,13 @@ def _prepare_info(tier_name):
     return ret
 
 
-def _healthcheck_targets(api_targets, nginx=None):
-    """Pings targets in 'api_targets' for health and removes a new map of 'healhty_targets' as a result."""
-    nginx = nginx or {}
-    if not nginx.get('healthcheck_targets', True):
-        log.info("Not running health checks on targets, as configured.")
-        return
 
-    healthcheck_timeout = nginx.get('healthcheck_timeout', HEALTHCHECK_TIMEOUT)
-    healthcheck_port = nginx.get('healthcheck_port', 8080)
-    healthy_targets = {}
-
-    for api_target_name, targets in api_targets.items():
-        healthy_targets[api_target_name] = []
-        for target in targets[:]:
-            # Ping the target for health. The assumption is that the target runs a plain
-            # http server on port 8080 and responds to / with a 200.
-            healthy = False
-            try:
-                ret = requests.get(
-                    "http://{}:{}/".format(target['private_ip_address'], healthcheck_port),
-                    timeout=healthcheck_timeout
-                )
-            except Exception as e:
-                log.warning("Target %s[%s]: Healthcheck failed: %s.", api_target_name, target['private_ip_address'], e)
-                target['health_status'] = str(e)
-            else:
-                if ret.status_code != 200:
-                    log.warning(
-                        "EC2 instance %s[%s]: Healthcheck response failure: %s: %s.",
-                        api_target_name, target['private_ip_address'], ret.status_code, ret.text
-                    )
-                    target['health_status'] = u"{}: {}".format(ret.status_code, ret.text)
-                else:
-                    healthy = True
-
-            if healthy:
-                target['health_status'] = 'ok'
-                healthy_targets[api_target_name].append(target)
-
-    return healthy_targets
 
 
 def get_api_targets(conf, deployables):
     """Return a dict where key is deployable name and value is list of targets."""
     # Note, only AWS targets supported here.
     return get_api_targets_from_aws(conf, deployables)
-
-
-def get_api_targets_from_aws(conf, deployables):
-
-    # Enumerate EC2's that match the entries in 'deployables' and are tagged as 'api-target'.
-    if 'aws' not in conf.tier:
-        raise RuntimeError("'aws' section missing from tier configuration.")
-
-    ec2 = boto3.resource('ec2', region_name=conf.tier['aws']['region'])
-    filters = {
-        'instance-state-name': 'running',
-        'tag:tier': conf.tier['tier_name'],
-    }
-    ec2_instances = list(ec2.instances.filter(Filters=filterize(filters)))
-
-    # If the instances are part of an autoscaling group, make sure they are healthy and in service.
-    autoscaling = boto3.client('autoscaling', region_name=conf.tier['aws']['region'])
-    auto_ec2s = autoscaling.describe_auto_scaling_instances(InstanceIds=[ec2.instance_id for ec2 in ec2_instances])
-    auto_ec2s = {auto_ec2['InstanceId']: auto_ec2 for auto_ec2 in auto_ec2s['AutoScalingInstances']}
-    # auto_ec2s is a dict with instance id as key, and value is a dict with LifecycleState and HealthStatus key.
-
-    api_targets = {}
-    for ec2 in ec2_instances:
-
-        # Analyse the EC2 instances and see if they are supposed to be a target of the api router.
-        tags = fold_tags(ec2.tags)
-        api_status = tags.get('api-status')
-        api_target = tags.get('api-target')
-        api_port = tags.get('api-port')
-        name = tags.get('Name')
-
-        # Check if instance is being "scaled in" by autoscaling group.
-        if ec2.instance_id in auto_ec2s:
-            if auto_ec2s[ec2.instance_id]['LifecycleState'].startswith('Terminating'):
-                # The instances are normally equipped with a lifecycle hook that specifies
-                # 2 minute timeout before they are terminated. The 'LivecycleState' value
-                # is "Terminating:Waiting" during this transition.
-                # The timeout can be extended by by calling record_lifecycle_action_heartbeat()
-                # on the lifecycle hook. Example:
-                # boto3.client('autoscaling).record_lifecycle_action_heartbeat(...)
-                #
-                # To gracefully drain the connections, the instance is marked as 'backup'. This
-                # simply removes the instance from the round robin load balancing.
-                log.info("EC2 instance %s[%s] terminating. Marking it as 'backup' to drain connections.", name, ec2.instance_id[:7])
-                tags['api-param'] = 'backup'  # This will enable connection draining in Nginx.
-
-        if not any([api_status, api_target, api_port]):
-            log.info("EC2 instance %s[%s] not in rotation, as it's not configured as api-target.", name, ec2.instance_id[:7])
-            continue
-
-        if any([api_status, api_target, api_port]) and not all([api_status, api_target, api_port]):
-            log.warning("EC2 instance %s[%s] must define all api tags, not just some: %s.", name, ec2.instance_id[:7], tags)
-            continue
-
-        if not api_port.isnumeric():
-            log.warning("EC2 instance %s[%s] has bogus 'api-port' tag: %s.", name, ec2.instance_id[:7], api_port)
-            continue
-
-        deployable = deployables.get(api_target)
-        if not deployable:
-            log.warning("EC2 instance %s[%s]: No deployable defined for api-target '%s'.", name, ec2.instance_id[:7], api_target)
-            continue
-
-        if api_status not in ['online', 'online2']:
-            log.info("EC2 instance %s[%s] not in rotation, api-status tag is '%s'.", name, ec2.instance_id[:7], api_status)
-            continue
-
-        target = {
-            'name': name,
-            'image_id': ec2.image_id,
-            'instance_id': ec2.id,
-            'instance_type': ec2.instance_type,
-            'launch_time': ec2.launch_time.isoformat() + 'Z',
-            'placement': ec2.placement,
-            'private_ip_address': ec2.private_ip_address,
-            'public_ip_address': ec2.public_ip_address,
-            'state_name': ec2.state['Name'],
-            'state_transition_reason': ec2.state_transition_reason,
-            'subnet_id': ec2.subnet_id,
-            'tags': tags,
-            'vpc_id': ec2.vpc_id,
-            'comment': "{} [{}] [{}]".format(name, ec2.instance_type, ec2.placement['AvailabilityZone']),
-        }
-
-        api_targets.setdefault(api_target, []).append(target)
-
-    return api_targets
 
 
 def _generate_status(data):
@@ -387,19 +267,6 @@ def apply_nginx_config(nginx_config, skip_if_same=True):
     ret = subprocess.call(['sudo', 'nginx', '-s', 'reload'])
     time.sleep(1)
     return ret
-
-
-def filterize(d):
-    """
-    Return dictionary 'd' as a boto3 "filters" object by unfolding it to a list of
-    dict with 'Name' and 'Values' entries.
-    """
-    return [{'Name': k, 'Values': [v]} for k, v in d.items()]
-
-
-def fold_tags(tags, key_name=None, value_name=None):
-    """Fold boto3 resource tags array into a dictionary."""
-    return {tag['Key']: tag['Value'] for tag in tags}
 
 
 def cli():

@@ -285,6 +285,13 @@ http {
             return 503 '{"status_code": 503, "message": "Service Unavailable. {{ route.deployable.reason_inactive }}"}';
         }
         {% elif route.healthy_targets %}
+        # Hints from https://gist.github.com/shortjared/3376ab39980c68d0f473a7d4b08c8bd5
+        location /{{ route.api }} {
+            resolver 127.0.0.53;
+            proxy_pass https://1cesljneq4.execute-api.eu-west-1.amazonaws.com/dev;
+            proxy_ssl_server_name on;
+        }
+        {% elif route.healthy_targets %}
         location /{{ route.api }} {
             uwsgi_pass {{ name }}-servers;
             uwsgi_param  QUERY_STRING       $query_string;
