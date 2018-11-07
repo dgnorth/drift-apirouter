@@ -14,7 +14,7 @@ driftconfig = { git = 'https://github.com/dgnorth/drift-config.git', ref = 'deve
 "boto3" = "*"
 requests = "*"
 
-apirouter = {path = "."}  # to register apirouter-conf command.
+apirouter = {path = ".",  editable = true}  # to register apirouter-conf command.
 
 
 [dev-packages]
