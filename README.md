@@ -12,18 +12,18 @@ Advise from this [blog](https://gist.github.com/joewiz/4c39c9d061cf608cb62b) pro
 
 
 ### UWSGI tuning
- 
+
 Note, the same file limit settings need to be applied to the uwsgi instance as with the nginx instance. Just use the stuff above.
 
 Now, the important settings in uwsgi.ini are:
 
 These paramaters have been carefully chosen and tuned to perfection:
 
-```bash
+```ini
 [uwsgi]
 
 # Process management info
-# Processes should be 2 x CPU. 
+# Processes should be 2 x CPU.
 # Threads are not used with 'gevent'
 # The number of 'gevent' doesn't seem to matter at all. Needs investigating. (Libraries are not monkeypatched, etc..)
 processes = 8
@@ -83,7 +83,7 @@ The userlist.txt file is generated using a python script that comes with pgbounc
 
 The databases are mapped in in a straight forward manner
 
-```bash
+```ini
 [databases]
 DEVNORTH_default_drift-base = host=postgres.devnorth.dg-api.com user=zzp_user password=zzp_user
 
