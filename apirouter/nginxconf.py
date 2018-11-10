@@ -17,7 +17,7 @@ import time
 import click
 from jinja2 import Environment, PackageLoader
 from driftconfig.util import get_drift_config
-from apirouter.awstargets import get_ec2_targets_for_tier, get_api_endpoints_for_tier
+from apirouter.awstargets import get_ec2_targets_for_tier, get_api_endpoints_for_tier, get_name_server
 
 
 log = logging.getLogger(__name__)
@@ -31,6 +31,7 @@ if sys.platform.startswith("linux"):
         'log': '/var/log',
         'root': '/usr/share/nginx',
         'nginx_config': '/etc/nginx/nginx.conf',
+        'nameserver': get_name_server(),
     }
 elif sys.platform == 'darwin':
     platform = {
@@ -39,6 +40,7 @@ elif sys.platform == 'darwin':
         'log': '/usr/local/var/log',
         'root': '/usr/local/share/nginx',
         'nginx_config': '/usr/local/etc/nginx/nginx.conf',
+        'nameserver': get_name_server(),
     }
 else:
     platform = {}
@@ -48,7 +50,7 @@ platform['os'] = sys.platform
 HEALTHCHECK_TIMEOUT = 1.0  # Timeout for target health check ping.
 
 
-def _prepare_info(tier_name):
+def _prepare_info(tier_name, check_health=True):
     conf = get_drift_config(tier_name=tier_name)
     ts = conf.table_store
 
@@ -76,8 +78,8 @@ def _prepare_info(tier_name):
     deployables = {d['deployable_name']: d for d in deployables}  # Turn into a dict
 
     # Prepare routes for EC2 targets and API gateway endpoints.
-    ec2_targets = get_ec2_targets_for_tier(tier_name=tier_name, check_health=True)
-    api_endpoints = get_api_endpoints_for_tier(tier_name=tier_name, check_health=True)
+    ec2_targets = get_ec2_targets_for_tier(tier_name=tier_name, check_health=check_health)
+    api_endpoints = get_api_endpoints_for_tier(tier_name=tier_name, check_health=check_health)
 
     # Make sure the same deployable is not deployed both as an EC2 and an api gateway.
     common = set(ec2_targets) & set(api_endpoints)
@@ -97,7 +99,7 @@ def _prepare_info(tier_name):
             routes[deployable_name] = route.copy()
             routes[deployable_name]['api'] = route.get('api', deployable_name)
             routes[deployable_name]['ec2_targets'] = ec2_targets.get(deployable_name, [])
-            routes[deployable_name]['api_endpoints'] = api_endpoints.get(deployable_name, [])
+            routes[deployable_name]['api_endpoint'] = api_endpoints.get(deployable_name,)
             routes[deployable_name]['deployable'] = deployable
 
     # Example of product and custom key:
@@ -192,12 +194,12 @@ def _generate_status(data):
                     {
                         'address': "{}:{}".format(target['private_ip_address'], target['tags']['api-port']),
                         'status': target['tags']['api-status'],
-                        'health': target['health_status'],
+                        'health': target.get('health_status'),
                         'version': target['tags'].get('drift:manifest:version'),
                         ##'tags': target['tags'],
                     }
                 ]
-                for target in route['targets']
+                for target in route['ec2_targets']
             ]
         }
         if not service['is_active'] and 'reason_inactive' in route['deployable']:
@@ -222,8 +224,8 @@ def _generate_status(data):
     return json.dumps(status, indent=4)
 
 
-def generate_nginx_config(tier_name):
-    data = _prepare_info(tier_name=tier_name)
+def generate_nginx_config(tier_name, check_health=True):
+    data = _prepare_info(tier_name=tier_name, check_health=check_health)
     env = Environment(loader=PackageLoader('apirouter', ''))
     env.filters['jsonify'] = lambda ob: json.dumps(ob, indent=4)
     ret = {
@@ -241,7 +243,7 @@ def write_status_doc(status):
     if not os.path.exists(status_folder):
         os.makedirs(status_folder)
     with open(os.path.join(platform['root'], 'api-router', 'status.json'), 'w') as f:
-        f.write(nginx_config['status'])
+        f.write(status)
 
 
 def apply_nginx_config(nginx_config, skip_if_same=True):
@@ -263,9 +265,15 @@ def apply_nginx_config(nginx_config, skip_if_same=True):
 
 @click.command()
 @click.option('--preview', '-p', is_flag=True, help='Preview only.')
-def cli(preview):
-    logging.basicConfig(level='WARNING')
-    nginx_config = generate_nginx_config(tier_name=os.environ['DRIFT_TIER'])
+@click.option('--log-level', '-l', default='WARNING', help='Logging level.')
+@click.option('--skip-healthcheck', '-s', is_flag=True, help='Skip health check.')
+def cli(preview, log_level, skip_healthcheck):
+    logging.basicConfig(level=log_level)
+    print("Configure Drift API Router.")
+    nginx_config = generate_nginx_config(
+        tier_name=os.environ['DRIFT_TIER'],
+        check_health=not skip_healthcheck,
+    )
 
     if preview:
         print(nginx_config['config'])

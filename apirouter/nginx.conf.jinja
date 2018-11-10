@@ -277,35 +277,15 @@ http {
 
         ##
         # Dynamic locations:
+        # Hints from https://gist.github.com/shortjared/3376ab39980c68d0f473a7d4b08c8bd5
         ##
-        {% for name, route in routes.items() %}
+{% for name, route in routes.items() %}
         # Deployable: '{{ route.deployable_name }}', active: {{ route.deployable.is_active }}
-        {%- if route.deployable.is_active == False %}
+    {%- if route.deployable.is_active == False %}
         location /{{ route.api }} {
             return 503 '{"status_code": 503, "message": "Service Unavailable. {{ route.deployable.reason_inactive }}"}';
         }
-        {% elif route.healthy_targets %}
-        # Hints from https://gist.github.com/shortjared/3376ab39980c68d0f473a7d4b08c8bd5
-        location /{{ route.api }} {
-            resolver 127.0.0.53;
-            proxy_pass https://1cesljneq4.execute-api.eu-west-1.amazonaws.com/dev;
-            proxy_ssl_server_name on;
-        }
-        {% elif route.healthy_targets %}
-        {% if route.api_gateway %}
-
-        location /drift {
-            resolver 127.0.0.53;  #FIXIYFIIIIIIIX!!!!!!  get the nameserver from /etc/resolv.conf
-            proxy_pass https://dinkgdrwrh.execute-api.eu-west-1.amazonaws.com/main;
-            proxy_ssl_server_name on;
-            proxy_set_header X-Forwarded-Host $Host;
-            proxy_set_header X-Script-Name /drift;
-            proxy_set_header  X-Real-IP  $remote_addr;
-         #   proxy_set_header  X-Forwarded-For $proxy_add_x_forwarded_for;
-                }
-
-
-        {% else %}
+    {% elif route.ec2_targets %}
         location /{{ route.api }} {
             uwsgi_pass {{ name }}-servers;
             uwsgi_param  QUERY_STRING       $query_string;
@@ -326,12 +306,31 @@ http {
 
             uwsgi_param HTTP_X_SCRIPT_NAME  /{{ route.api }};
         }
+    {% elif route.api_endpoint %}
+        {% if route.api_endpoint['health_status'] == 'error' %}
+        location /{{ route.api }} {
+            return 503 '{"status_code": 503, "message": "Service Unavailable. API Gateway not responding."}';
+        }
         {% else %}
+        location /{{ route.api }} {
+            {% if plat.nameserver %}
+            resolver {{ plat.nameserver }};
+            {% endif %}
+            proxy_pass {{ route.api_endpoint['url'] }};
+            proxy_ssl_server_name on;
+            proxy_set_header X-Forwarded-Host $Host;
+            proxy_set_header X-Script-Name /drift;
+            proxy_set_header  X-Real-IP  $remote_addr;
+            proxy_set_header  X-Forwarded-For $remote_addr;
+        }
+        {% endif %}
+
+    {% else %}
         location /{{ route.api }} {
             return 503 '{"status_code": 503, "message": "Service Unavailable. No targets registered."}';
         }
-        {%- endif %}
-        {%- endfor %}
+    {%- endif %}
+{%- endfor %}
 
         # API product key check
         set $bad_key "false";
@@ -373,14 +372,14 @@ http {
         }
     }
 
-    {%- for name, route in routes.items() %}
-    {% if route.healthy_targets %}
+{%- for name, route in routes.items() %}
+    {% if route.ec2_targets %}
     upstream {{ name }}-servers {
-        {%- for target in route.healthy_targets %}
+        {%- for target in route.ec2_targets %}
         server {{ target.private_ip_address}}:{{ target.tags['api-port']}} {{ target.tags['api-param']}};  # {{ target.comment }}
         {%- endfor %}
     }
     {%- endif %}
-    {%- endfor %}
+{%- endfor %}
 }
 

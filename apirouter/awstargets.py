@@ -6,6 +6,7 @@ Utility to find Drift targets running in the AWS Cloud.
 import os
 import socket
 import logging
+import re
 
 import boto3
 import requests
@@ -292,6 +293,14 @@ def _do_api_gw_health_check(url, public_url=None):
             timeout=timeout
         )
     return status, message
+
+
+def get_name_server():
+    """Return IP address of private name server."""
+    with open('/etc/resolv.conf') as f:
+        s = re.search("nameserver[\W](.*)\s", f.read())
+        if s:
+            return s.groups()[0]
 
 
 def get_api_endpoints_for_tier(tier_name, check_health=False, public_url=None):
