@@ -1,29 +1,22 @@
 [[source]]
-
 url = "https://pypi.python.org/simple"
 verify_ssl = true
 name = "pypi"
 
-
 [packages]
-
 # as 'extras' is buggy in pipenv, we explicitly include these:
 redis = "*"
 driftconfig = { git = 'https://github.com/dgnorth/drift-config.git', ref = 'develop', extras = ["s3-backend", "redis-backend"]}
 "jinja2" = "*"
 "boto3" = "*"
 requests = "*"
-
 apirouter = {path = ".",  editable = true}  # to register apirouter-conf command.
-
+click = "*"
 
 [dev-packages]
-
 pytest = "*"
 uwsgi = "*"
 mock = "*"
 
-
 [requires]
-
 python_version = "3.6"

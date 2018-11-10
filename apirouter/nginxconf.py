@@ -14,11 +14,14 @@ import subprocess
 import json
 import time
 
+import click
 from jinja2 import Environment, PackageLoader
 from driftconfig.util import get_drift_config
-from apirouter.awstargets import healthcheck_targets, get_api_targets_from_aws
+from apirouter.awstargets import get_ec2_targets_for_tier, get_api_endpoints_for_tier
+
 
 log = logging.getLogger(__name__)
+
 
 # Platform specifics
 if sys.platform.startswith("linux"):
@@ -72,33 +75,29 @@ def _prepare_info(tier_name):
     deployables = ts.get_table('deployables').find({'tier_name': tier_name})
     deployables = {d['deployable_name']: d for d in deployables}  # Turn into a dict
 
-    # Prepare routes (or api forwarding)
-    api_targets = get_api_targets(conf, deployables)
+    # Prepare routes for EC2 targets and API gateway endpoints.
+    ec2_targets = get_ec2_targets_for_tier(tier_name=tier_name, check_health=True)
+    api_endpoints = get_api_endpoints_for_tier(tier_name=tier_name, check_health=True)
 
-    # Run health check on targets
-    nginx = ts.get_table('nginx').get({'tier_name': tier_name})
-    if nginx.get('healthcheck_targets', True):
-        healthcheck_timeout = nginx.get('healthcheck_timeout', HEALTHCHECK_TIMEOUT)
-        healthcheck_port = nginx.get('healthcheck_port', 8080)
-        healthy_targets = healthcheck_targets(
-            api_targets=api_targets,
-            healthcheck_timeout=healthcheck_timeout,
-            healthcheck_port=healthcheck_port
+    # Make sure the same deployable is not deployed both as an EC2 and an api gateway.
+    common = set(ec2_targets) & set(api_endpoints)
+    if common:
+        log.warning(
+            "Deployable(s) found both as EC2 target and API Gateway: %s\n"
+            "The EC2 target will be selected!",
+            ' '.join(common)
         )
-    else:
-        healthy_targets = {}
 
     routes = {}
-
     for route in ts.get_table('routing').find():
         deployable_name = route['deployable_name']
         deployable = ts.get_table('deployables').get(
             {'tier_name': tier_name, 'deployable_name': deployable_name})
         if deployable is not None:
             routes[deployable_name] = route.copy()
-            routes[deployable_name].setdefault('api', deployable_name)  # Makes it easier for the template code.
-            routes[deployable_name]['targets'] = api_targets.get(deployable_name, [])
-            routes[deployable_name]['healthy_targets'] = healthy_targets.get(deployable_name, [])
+            routes[deployable_name]['api'] = route.get('api', deployable_name)
+            routes[deployable_name]['ec2_targets'] = ec2_targets.get(deployable_name, [])
+            routes[deployable_name]['api_endpoints'] = api_endpoints.get(deployable_name, [])
             routes[deployable_name]['deployable'] = deployable
 
     # Example of product and custom key:
@@ -178,15 +177,6 @@ def _prepare_info(tier_name):
     return ret
 
 
-
-
-
-def get_api_targets(conf, deployables):
-    """Return a dict where key is deployable name and value is list of targets."""
-    # Note, only AWS targets supported here.
-    return get_api_targets_from_aws(conf, deployables)
-
-
 def _generate_status(data):
     # Make a pretty summary of services, routes, upstream servers and products.
     deployables = []
@@ -245,15 +235,17 @@ def generate_nginx_config(tier_name):
     return ret
 
 
+def write_status_doc(status):
+    """Write 'status' to a json file which gets served at /api-router."""
+    status_folder = os.path.join(platform['root'], 'api-router')
+    if not os.path.exists(status_folder):
+        os.makedirs(status_folder)
+    with open(os.path.join(platform['root'], 'api-router', 'status.json'), 'w') as f:
+        f.write(nginx_config['status'])
+
+
 def apply_nginx_config(nginx_config, skip_if_same=True):
     """Apply the Nginx config on the local machine and trigger a reload."""
-    if 'status' in nginx_config:
-        status_folder = os.path.join(platform['root'], 'api-router')
-        if not os.path.exists(status_folder):
-            os.makedirs(status_folder)
-        with open(os.path.join(platform['root'], 'api-router', 'status.json'), 'w') as f:
-            f.write(nginx_config['status'])
-
     if os.path.exists(platform['nginx_config']):
         with open(platform['nginx_config'], 'r') as f:
             if nginx_config['config'] == f.read() and skip_if_same:
@@ -269,9 +261,22 @@ def apply_nginx_config(nginx_config, skip_if_same=True):
     return ret
 
 
-def cli():
+@click.command()
+@click.option('--preview', '-p', is_flag=True, help='Preview only.')
+def cli(preview):
     logging.basicConfig(level='WARNING')
     nginx_config = generate_nginx_config(tier_name=os.environ['DRIFT_TIER'])
+
+    if preview:
+        print(nginx_config['config'])
+        subset = nginx_config['data'].copy()
+        del subset['conf']
+        print(subset)
+        return
+
+    if 'status' in nginx_config:
+        write_status_doc(nginx_config['status'])
+
     ret = apply_nginx_config(nginx_config)
     if ret == "skipped":
         print("No change detected.")

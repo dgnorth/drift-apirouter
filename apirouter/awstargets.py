@@ -18,18 +18,20 @@ log = logging.getLogger(__name__)
 
 
 HEALTHCHECK_TIMEOUT = 1.0  # Timeout for target health check ping.
+HEALTHCHECK_PORT = 8080  # HTTP server port on targets.
 
 
-def get_api_targets_from_aws(conf, deployables):
+def _get_ec2_targets_from_aws(tier_name):
 
-    # Enumerate API Gateways that match the entries in 'deployables' and are tagged as 'api-target'.
-
+    conf = get_drift_config(tier_name=tier_name)
+    deployables = conf.table_store.get_table('deployables').find({'tier_name': tier_name})
+    deployables = {d['deployable_name']: d for d in deployables}  # Turn into a dict
 
     # Enumerate EC2's that match the entries in 'deployables' and are tagged as 'api-target'.
     if 'aws' not in conf.tier:
         raise RuntimeError("'aws' section missing from tier configuration.")
 
-    ec2 = boto3.resource('ec2', region_name=conf.tier['aws']['region'])
+    ec2_client = boto3.resource('ec2', region_name=conf.tier['aws']['region'])
     filters = {
         'instance-state-name': 'running',
         'tag:tier': conf.tier['tier_name'],
@@ -41,17 +43,21 @@ def get_api_targets_from_aws(conf, deployables):
         """
         return [{'Name': k, 'Values': [v]} for k, v in d.items()]
 
-    ec2_instances = list(ec2.instances.filter(Filters=filterize(filters)))
+    log.info("Fetch EC2 instances that match %s", filterize(filters))
+    ec2_instances = list(ec2_client.instances.filter(Filters=filterize(filters)))
 
     # If the instances are part of an autoscaling group, make sure they are healthy and in service.
-    autoscaling = boto3.client('autoscaling', region_name=conf.tier['aws']['region'])
-    auto_ec2s = autoscaling.describe_auto_scaling_instances(InstanceIds=[ec2.instance_id for ec2 in ec2_instances])
+    region_name = conf.tier['aws']['region']
+    vpc = _get_vpc_for_tier(region_name=region_name, tier_name=tier_name)
+    autoscaling = boto3.client('autoscaling', region_name=region_name)
+    auto_ec2s = autoscaling.describe_auto_scaling_instances(
+        InstanceIds=[ec2.instance_id for ec2 in ec2_instances]
+    )
     auto_ec2s = {auto_ec2['InstanceId']: auto_ec2 for auto_ec2 in auto_ec2s['AutoScalingInstances']}
     # auto_ec2s is a dict with instance id as key, and value is a dict with LifecycleState and HealthStatus key.
 
     api_targets = {}
     for ec2 in ec2_instances:
-
         # Analyse the EC2 instances and see if they are supposed to be a target of the api router.
 
         def fold_tags(tags, key_name=None, value_name=None):
@@ -79,6 +85,10 @@ def get_api_targets_from_aws(conf, deployables):
                 log.info("EC2 instance %s[%s] terminating. Marking it as 'backup' to drain connections.", name, ec2.instance_id[:7])
                 tags['api-param'] = 'backup'  # This will enable connection draining in Nginx.
 
+        if ec2.vpc_id != vpc['VpcId']:
+            log.warning("EC2 instance %s[%s] not in correct VPC. Fix tier tag!", name, ec2.instance_id[:7])
+            continue
+
         if not any([api_status, api_target, api_port]):
             log.info("EC2 instance %s[%s] not in rotation, as it's not configured as api-target.", name, ec2.instance_id[:7])
             continue
@@ -99,6 +109,11 @@ def get_api_targets_from_aws(conf, deployables):
         if api_status not in ['online', 'online2']:
             log.info("EC2 instance %s[%s] not in rotation, api-status tag is '%s'.", name, ec2.instance_id[:7], api_status)
             continue
+
+        log.info(
+            "EC2 instance %s[%s] in rotation. [%s:%s:%s]",
+            name, ec2.instance_id[:7], api_target, api_status, api_port
+        )
 
         target = {
             'name': name,
@@ -122,17 +137,31 @@ def get_api_targets_from_aws(conf, deployables):
     return api_targets
 
 
-def healthcheck_targets(api_targets, healthcheck_timeout, healthcheck_port):
+def _healthcheck_targets(api_targets):
     """Pings targets in 'api_targets' for health and removes a new map of 'healhty_targets' as a result."""
     healthy_targets = {}
 
     for api_target_name, targets in api_targets.items():
         healthy_targets[api_target_name] = []
         for target in targets[:]:
+            log.info("Checking health of %s", target['private_ip_address'])
             # Ping the target for health. The assumption is that the target runs a plain
             # http server on port 8080 and responds to / with a 200.
-            url = 'http://{}:{}/healthcheck'.format(target['private_ip_address'], healthcheck_port)
+
+            # HACK: There is no uniform healtch check path on targets. Trying out a few until
+            # this gets cleaned up:
+            # Try /healthcheck
+            url = 'http://{}:{}/healthcheck'.format(target['private_ip_address'], HEALTHCHECK_PORT)
             status, message = _check_url(url)
+            if status != 200:
+                # Try /
+                url = 'http://{}:{}/'.format(target['private_ip_address'], HEALTHCHECK_PORT)
+                status, message = _check_url(url)
+            if status != 200:
+                # Try /gurko
+                url = 'http://{}:{}/gurko'.format(target['private_ip_address'], HEALTHCHECK_PORT)
+                status, message = _check_url(url)
+
             if status != 200:
                 log.warning(
                     "Target %s[%s]: Healthcheck failed: %s.",
@@ -148,12 +177,13 @@ def healthcheck_targets(api_targets, healthcheck_timeout, healthcheck_port):
     return healthy_targets
 
 
-def get_vpc_for_tier(region_name, tier_name):
+def _get_vpc_for_tier(region_name, tier_name):
     """
     Returns first VPC that matches tag:tier='tier_name' or None if none found.
     The response format can be seen here:
     https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/ec2.html#EC2.Client.describe_vpcs
     """
+    log.info("Getting VPC for tier %s", tier_name)
     client = boto3.client('ec2', region_name=region_name)
     vpcs = client.describe_vpcs(Filters=[{'Name': 'tag:tier', 'Values': [tier_name]}])
     if vpcs['Vpcs']:
@@ -164,13 +194,14 @@ def get_vpc_for_tier(region_name, tier_name):
 # https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-private-apis.html#apigateway-private-api-test-invoke-url
 
 
-def get_public_api_gw_url(region_name, tier_name, stage_name=None):
+def _get_public_api_gw_url(region_name, tier_name, stage_name=None):
     """
     Return a public URL for the API Gateway on the tier specified by 'tier_name'.
     The VPC must have an endpoint for 'com.amazonaws.eu-west-1.execute-api' service configured.
     """
+    log.info("Get public API Gateway URl for tier %s", tier_name)
     stage_name = stage_name or 'main'
-    vpc = get_vpc_for_tier(region_name, tier_name)
+    vpc = _get_vpc_for_tier(region_name, tier_name)
     if not vpc:
         return
 
@@ -190,7 +221,7 @@ def get_public_api_gw_url(region_name, tier_name, stage_name=None):
         return url
 
 
-def get_api_endpoints(region_name, tier_name, deployable_names, stage_name=None):
+def _get_api_endpoints(region_name, tier_name, deployable_names, stage_name=None):
     # Returns info on AWS API Gateway endpoints that match 'deployable_names'.
     stage_name = stage_name or 'main'
     client = boto3.client('apigateway', region_name=region_name)
@@ -200,6 +231,7 @@ def get_api_endpoints(region_name, tier_name, deployable_names, stage_name=None)
     }
     endpoints = []
 
+    log.info("Get API endpoints for tier %s", tier_name)
     for api in client.get_rest_apis(limit=500)['items']:
         if api['name'] in api_names:
             # Make sure this API got the expected stage name
@@ -239,7 +271,10 @@ def _check_url(url, headers=None, timeout=None):
         resp = requests.get(url, headers=headers, timeout=timeout)
         return resp.status_code, resp.text
     except Exception as e:
-        return 'error', str(e)
+        if 'timed out' in str(e):
+            return 'error', 'Timeout'
+        else:
+            return 'error', str(e)
 
 
 def _do_api_gw_health_check(url, public_url=None):
@@ -259,17 +294,43 @@ def _do_api_gw_health_check(url, public_url=None):
     return status, message
 
 
-def get_endpoints_for_tier(tier_name, check_health=False, public_url=None):
+def get_api_endpoints_for_tier(tier_name, check_health=False, public_url=None):
     """
-    Returns a list of API Gateway endpoints for all deployables in tier 'tier_name' and
+    Returns a dict of API Gateway endpoints for all deployables in tier 'tier_name' and
     the health status if 'health_check' is set.
     If 'public_url' is set the health check will try to use the public api gw endpoint
     to ping the target.
+
+    Abridged example of response:
+
+    {
+        "drift-base": {
+            "deployable_name": "drift-base",
+            "url": "https://spliffdnkgen.execute-api.eu-west-1.amazonaws.com/main",
+            "api": {
+                "id": "spliffdnkgen",
+                "name": "DEVNORTH-drift-base",
+                "createdDate": datetime.datetime(2018, 10, 24, 13, 21, 59, tzinfo=tzlocal()),
+                "apiKeySource": "HEADER",
+                "endpointConfiguration": {
+                    "types": [
+                        "PRIVATE"
+                    ]
+                },
+                "policy": "..."
+            },
+            "health_status": "error",
+            "message": "DNS lookup failed"
+        }
+    }
+
+    Note, if endpoint health is good 'health_status' is the status code (usually 200).
+
     """
     conf = get_drift_config(tier_name=tier_name)
     deployables = conf.table_store.get_table('deployables').find({'tier_name': tier_name})
     deployable_names = [deployable['deployable_name'] for deployable in deployables]
-    endpoints = get_api_endpoints(
+    endpoints = _get_api_endpoints(
         region_name=conf.tier['aws']['region'],
         tier_name=conf.tier['tier_name'],
         deployable_names=deployable_names,
@@ -278,17 +339,60 @@ def get_endpoints_for_tier(tier_name, check_health=False, public_url=None):
     if check_health:
         for ep in endpoints:
             status, message = _do_api_gw_health_check(ep['url'], public_url)
-            ep['status'] = status
+            ep['health_status'] = status
             ep['message'] = message
 
-    return endpoints
+    return {ep['deployable_name']: ep for ep in endpoints}
+
+
+def get_ec2_targets_for_tier(tier_name, check_health=False):
+    """
+    Returns a dict of EC2 instances for all deployables in tier 'tier_name' that are tagged
+    as targets.
+    Health is checked if 'check_health' is set.
+
+
+    Abridged example of response:
+
+    {
+        "drift-base":
+        [
+            {
+                "name": "DEVNORTH-drift-base-auto",
+                "image_id": "ami-09378736dddbd9368",
+                "instance_id": "i-0a436fc2e66a39f35",
+                "instance_type": "t2.small",
+                "launch_time": "2018-10-16T13:05:14+00:00Z",
+                "private_ip_address": "10.50.2.139",
+                "state_name": "running",
+                "subnet_id": "subnet-8544def2",
+                "tags": {
+                    "api-status": "online",
+                    "api-target": "drift-base",
+                    "service-name": "drift-base",
+                    "Name": "DEVNORTH-drift-base-auto",
+                    "api-port": "10080",
+                    "tier": "DEVNORTH"
+                },
+                "vpc_id": "vpc-6458d901",
+                "comment": "DEVNORTH-drift-base-auto [t2.small] [eu-west-1b]",
+                "health_status": "ok"
+            }
+        ]
+    }
+    """
+    ec2_targets = _get_ec2_targets_from_aws(tier_name=tier_name)
+    if check_health:
+        _healthcheck_targets(ec2_targets)
+
+    return ec2_targets
 
 
 def _dump():
     tier_name = os.environ['DRIFT_TIER']
-    conf = get_drift_config(tier_name=tier_name)
 
-    public_url = get_public_api_gw_url(
+    conf = get_drift_config(tier_name=tier_name)
+    public_url = _get_public_api_gw_url(
         region_name=conf.tier['aws']['region'],
         tier_name=conf.tier['tier_name']
     )
@@ -296,12 +400,24 @@ def _dump():
         print("VPC has public endpoint for execute-api service calls:")
         print(public_url)
 
+    endpoints = get_api_endpoints_for_tier(tier_name, check_health=True, public_url=public_url)
+    ec2_targets = get_ec2_targets_for_tier(tier_name, check_health=True)
+
     print("AWS API Gateways:")
-    endpoints = get_endpoints_for_tier(tier_name, check_health=True, public_url=public_url)
-    for ep in endpoints:
-        status, message = _do_api_gw_health_check(ep['url'], public_url)
-        print("\t{}:\t{} [{}] {}".format(ep['deployable_name'], ep['url'], status, message))
+    for ep in endpoints.values():
+        print("\t{}:\t{}\t[{}] {}".format(ep['deployable_name'], ep['url'], ep['health_status'], ep['message']))
+
+    print("AWS EC2 Targets:")
+    for deployable_name, targets in ec2_targets.items():
+        if not targets:
+            print("\t{}: (no targets registered or running)".format(deployable_name))
+        else:
+            print("\t{}:".format(deployable_name))
+            for target in targets:
+                print("\t\t{}:{}\t[{}]".format(
+                    target['private_ip_address'], target['tags']['api-port'], target['health_status']))
 
 
 if __name__ == '__main__':
+    logging.basicConfig(level='INFO')
     _dump()
