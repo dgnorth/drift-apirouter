@@ -47,7 +47,7 @@ class TestNginxConfig(unittest.TestCase):
 
     # Some patching
     @classmethod
-    def get_api_targets(cls, tier_name, region_name, ts=None):
+    def get_ec2_targets_for_tier(cls, tier_name, check_health=False):
         tags = {
             'api-status': 'online',
             'api-target': cls.deployable_1,
@@ -69,13 +69,17 @@ class TestNginxConfig(unittest.TestCase):
         return {cls.deployable_1: targets}
 
     @classmethod
+    def get_api_endpoints_for_tier(cls, tier_name, check_health=False, public_url=None):
+        return {}
+
+    @classmethod
     def setUpClass(cls):
 
         import driftconfig.relib
         driftconfig.relib.CHECK_INTEGRITY = []
 
         # Create config with two deployables. The first one will have targets available (see
-        # get_api_targets() above). The second one has not target but is used to test keyless
+        # get_ec2_targets_for_tier() above). The second one has not target but is used to test keyless
         # api access.
         config_size = {
             'num_org': 5,
@@ -93,7 +97,8 @@ class TestNginxConfig(unittest.TestCase):
 
         cls.ts = ts
         cls.patchers = [
-            mock.patch('apirouter.nginxconf.get_api_targets', cls.get_api_targets, ts),
+            mock.patch('apirouter.nginxconf.get_ec2_targets_for_tier', cls.get_ec2_targets_for_tier, ts),
+            mock.patch('apirouter.nginxconf.get_api_endpoints_for_tier', cls.get_api_endpoints_for_tier, ts),
         ]
 
         for patcher in cls.patchers:
