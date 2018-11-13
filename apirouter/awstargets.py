@@ -298,7 +298,7 @@ def _do_api_gw_health_check(url, public_url=None):
 def get_name_server():
     """Return IP address of private name server."""
     with open('/etc/resolv.conf') as f:
-        s = re.search("nameserver[\W](.*)\s", f.read())
+        s = re.search(r"nameserver[\W](.*)\s", f.read())
         if s:
             return s.groups()[0]
 
