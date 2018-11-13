@@ -99,7 +99,7 @@ def _prepare_info(tier_name, check_health=True):
             routes[deployable_name] = route.copy()
             routes[deployable_name]['api'] = route.get('api', deployable_name)
             routes[deployable_name]['ec2_targets'] = ec2_targets.get(deployable_name, [])
-            routes[deployable_name]['api_endpoint'] = api_endpoints.get(deployable_name,)
+            routes[deployable_name]['api_endpoint'] = api_endpoints.get(deployable_name)
             routes[deployable_name]['deployable'] = deployable
 
     # Example of product and custom key:
@@ -200,7 +200,8 @@ def _generate_status(data):
                     }
                 ]
                 for target in route['ec2_targets']
-            ]
+            ],
+            'api_endpoint_url': route['api_endpoint']['url'] if route['api_endpoint'] else None,
         }
         if not service['is_active'] and 'reason_inactive' in route['deployable']:
             service['reason_inactive'] = route['deployable']['reason_inactive']
@@ -221,7 +222,7 @@ def _generate_status(data):
         ],
     }
 
-    return json.dumps(status, indent=4)
+    return json.dumps(status, indent=4, default=str)
 
 
 def generate_nginx_config(tier_name, check_health=True):
@@ -276,10 +277,10 @@ def cli(preview, log_level, skip_healthcheck):
     )
 
     if preview:
+        print("Nginx configuration file:")
         print(nginx_config['config'])
-        subset = nginx_config['data'].copy()
-        del subset['conf']
-        print(subset)
+        print("Status file:")
+        print(nginx_config['status'])
         return
 
     if 'status' in nginx_config:
