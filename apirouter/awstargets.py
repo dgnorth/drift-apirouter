@@ -71,9 +71,11 @@ def _get_ec2_targets_from_aws(tier_name):
         api_port = tags.get('api-port')
         name = tags.get('Name')
 
-        # Check if instance is being "scaled in" by autoscaling group.
+        # Check if instance is being scaled in or out by autoscaling group.
         if ec2.instance_id in auto_ec2s:
-            if auto_ec2s[ec2.instance_id]['LifecycleState'].startswith('Terminating'):
+            lifecycle_state = auto_ec2s[ec2.instance_id]['LifecycleState']
+
+            if lifecycle_state.startswith('Terminating'):
                 # The instances are normally equipped with a lifecycle hook that specifies
                 # 2 minute timeout before they are terminated. The 'LivecycleState' value
                 # is "Terminating:Waiting" during this transition.
@@ -85,6 +87,9 @@ def _get_ec2_targets_from_aws(tier_name):
                 # simply removes the instance from the round robin load balancing.
                 log.info("EC2 instance %s[%s] terminating. Marking it as 'backup' to drain connections.", name, ec2.instance_id[:7])
                 tags['api-param'] = 'backup'  # This will enable connection draining in Nginx.
+            elif lifecycle_state != 'InService':
+                log.warning("EC2 instance %s[%s] not in service yet: %s", name, ec2.instance_id[:7], lifecycle_state)
+                continue
 
         if ec2.vpc_id != vpc['VpcId']:
             log.warning("EC2 instance %s[%s] not in correct VPC. Fix tier tag!", name, ec2.instance_id[:7])
