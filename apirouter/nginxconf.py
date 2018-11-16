@@ -201,10 +201,18 @@ def _generate_status(data):
                 ]
                 for target in route['ec2_targets']
             ],
-            'api_endpoint_url': route['api_endpoint']['url'] if route['api_endpoint'] else None,
         }
         if not service['is_active'] and 'reason_inactive' in route['deployable']:
             service['reason_inactive'] = route['deployable']['reason_inactive']
+
+        ep = route['api_endpoint']
+        if ep:
+            service['api_gateway'] = {
+                'url': ep['url'],
+                'health': ep['message'] if ep['health_status'] == 'error' else 'ok',
+            }
+        else:
+            service['api_gateway'] = None
 
         deployables.append(service)
 
