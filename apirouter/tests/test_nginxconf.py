@@ -37,10 +37,10 @@ def simple_app(environ, start_response):
     status = '200 OK'
     headers = [('Content-type', 'application/json')]
     start_response(status, headers)
-    ret = json.dumps({"test_target": "ok"}, indent=4)
+    ret = json.dumps({"test_target": "ok"}, indent=4).encode('utf-8')
     req = '{REQUEST_METHOD} http://{HTTP_HOST}{REQUEST_URI}{QUERY_STRING}'.format(**environ)
     print("UWSGI request: {} (key={}).".format(req, environ.get('HTTP_DRIFT_API_KEY')))
-    return ret
+    return [ret]
 
 
 class TestNginxConfig(unittest.TestCase):
@@ -253,8 +253,12 @@ class TestNginxConfig(unittest.TestCase):
                     ret.json()
                 except Exception as e:
                     print("Badly formatted json or no json at all:")
-                    print(e)
-                    print(ret.text)
+                    print("The error: ", e)
+                    print("The url:", url)
+                    print("The ret.raw: ", repr(ret.raw))
+                    print("The ret.text:", repr(ret.text))
+                    print("The request headers: ", kw)
+                    print("The headers: ", ret.headers)
                     raise
 
         # Assert proper status code.
