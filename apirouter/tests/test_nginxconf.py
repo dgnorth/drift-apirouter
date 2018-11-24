@@ -367,7 +367,7 @@ class TestNginxConfig(unittest.TestCase):
             tenant_name=self.tenant_name_1,
             status_code=403,
         )
-        self.assertDictContainsSubset({"code": "api_key_error"}, ret.json()['error'])
+        self.assertEqual(ret.json()['error']['code'], 'api_key_error')
         self.assertIn("API key not found.", ret.json()['error']['description'])
 
         ret = self.get(
@@ -376,7 +376,7 @@ class TestNginxConfig(unittest.TestCase):
             tenant_name=self.tenant_name_1,
             status_code=403,
         )
-        self.assertDictContainsSubset({"code": "api_key_error"}, ret.json()['error'])
+        self.assertEqual(ret.json()['error']['code'], 'api_key_error')
         self.assertIn("API key not found.", ret.json()['error']['description'])
 
     def test_custom_key_access(self):
@@ -410,7 +410,7 @@ class TestNginxConfig(unittest.TestCase):
             tenant_name=self.tenant_name_1,
             status_code=403,
         )
-        self.assertDictContainsSubset({"code": "api_key_error"}, ret.json()['error'])
+        self.assertEqual(ret.json()['error']['code'], 'api_key_error')
         self.assertIn("API key is for", ret.json()['error']['description'])
 
         # Test bad key and requires key flags in the nginx config itself.
