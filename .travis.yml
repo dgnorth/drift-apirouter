@@ -9,6 +9,7 @@ env:
   global:
     - AWS_DEFAULT_REGION=eu-west-1
     - AWS_DEFAULT_OUTPUT=json
+    - DRIFT_TIER=DEVNORTH
   matrix:
     - DRIFT_CONFIG_URL=s3://relib-test/directive-games
 
