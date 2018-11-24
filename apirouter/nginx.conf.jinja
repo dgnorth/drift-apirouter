@@ -259,10 +259,6 @@ http {
 
         location /api-router {
             index status.json;
-            #add_header 'Access-Control-Allow-Origin' '*';
-            if (-d $request_filename) {
-                rewrite [^/]$ $http_x_forwarded_proto://$http_host$uri/ permanent;
-            }
         }
 
         location /healthcheck {

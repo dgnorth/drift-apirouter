@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import sys
 import os
+import os.path
 import time
 import unittest
 import requests
@@ -216,6 +217,15 @@ class TestNginxConfig(unittest.TestCase):
         if ret != 0:
             raise RuntimeError("Failed to set up test, apply_nginx_config() returned with {}.".format(ret))
 
+        # Generate a mock status.json file for /api-router/ endpoint
+        path = os.path.join(nginx_config['data']['plat']['root'], 'api-router')
+        if not os.path.exists(path):
+            os.mkdir(path)
+        statusfile = os.path.join(path, 'status.json')
+        if not os.path.exists(statusfile):
+            with open(statusfile, 'w') as f:
+                f.write('{"hi": "there"}\n')
+
         cls.nginx_config = nginx_config
         cls.key_api = '/' + cls.api_1
         cls.keyless_api = '/' + cls.api_2
@@ -292,7 +302,6 @@ class TestNginxConfig(unittest.TestCase):
         self.assertIn("API key not found.", ret.json()['error']['description'])
 
     def test_api_router_endpoint(self):
-        print(self.nginx_config['config'])
         self.get('/api-router/')
 
     def test_not_found(self):
