@@ -3,6 +3,7 @@ language: python
 sudo: required
 python:
 - 2.7
+- 3.6
 cache: pip
 addons:
   apt:
@@ -14,7 +15,7 @@ before_install:
 - sudo chown $(whoami) /etc/nginx/nginx.conf
 
 install:
-- pip install pipenv
+- pip install pipenv==2018.10.13
 - pipenv install --dev --deploy
 
 script:
