@@ -20,6 +20,12 @@ install:
 script:
 - pytest --cov
 
+env:
+  - DRIFT_CONFIG_URL=s3://relib-test/directive-games
+  - DRIFT_TIER=DEVNORTH
+
 after_success:
  - codecov
  - coverage report
+ - pip install -e "git+https://github.com/dgnorth/drift.git#egg=drift[aws]"
+ - drift-admin ami bake
