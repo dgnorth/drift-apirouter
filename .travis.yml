@@ -8,17 +8,18 @@ addons:
   apt:
     packages:
     - nginx
+
 before_install:
 - sudo chown $(whoami) /usr/share/nginx
 - sudo chown $(whoami) /etc/nginx/nginx.conf
 
 install:
-- pip install codecov
-- pip install pytest-cov
 - pip install pipenv
-- pipenv install --dev --skip-lock
+- pipenv install --dev --deploy
+
 script:
 - pytest --cov
+
 after_success:
  - codecov
  - coverage report
