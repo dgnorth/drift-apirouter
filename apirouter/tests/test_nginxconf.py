@@ -216,6 +216,7 @@ class TestNginxConfig(unittest.TestCase):
         if ret != 0:
             raise RuntimeError("Failed to set up test, apply_nginx_config() returned with {}.".format(ret))
 
+        cls.nginx_config = nginx_config
         cls.key_api = '/' + cls.api_1
         cls.keyless_api = '/' + cls.api_2
         cls.inactive_api = '/' + cls.api_3
@@ -291,6 +292,7 @@ class TestNginxConfig(unittest.TestCase):
         self.assertIn("API key not found.", ret.json()['error']['description'])
 
     def test_api_router_endpoint(self):
+        print(self.nginx_config['config'])
         self.get('/api-router/')
 
     def test_not_found(self):
