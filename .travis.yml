@@ -10,19 +10,22 @@ addons:
     - nginx
 
 before_install:
-- sudo chown $(whoami) /usr/share/nginx
-- sudo chown $(whoami) /etc/nginx/nginx.conf
-
+  - sudo chown $(whoami) /usr/share/nginx
+  - sudo chown $(whoami) /etc/nginx/nginx.conf
+  - export BOTO_CONFIG=/dev/null
 install:
-- pip install pipenv==2018.10.13
-- pipenv install --dev --deploy
+  - pip install pipenv==2018.10.13
+  - pipenv install --dev --deploy
 
 script:
-- pytest --cov
+  - pytest --cov
 
 env:
-  - DRIFT_CONFIG_URL=s3://relib-test/directive-games
-  - DRIFT_TIER=DEVNORTH
+  global:
+    - AWS_DEFAULT_REGION=eu-west-1
+    - AWS_DEFAULT_OUTPUT=json
+    - DRIFT_CONFIG_URL=s3://relib-test/directive-games
+    - DRIFT_TIER=DEVNORTH
 
 after_success:
  - codecov
