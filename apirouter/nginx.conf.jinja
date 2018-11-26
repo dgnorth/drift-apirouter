@@ -309,15 +309,15 @@ http {
         }
         {% else %}
         location /{{ route.api }} {
-            {% if plat.nameserver %}
+            {%- if plat.nameserver %}
             resolver {{ plat.nameserver }};
-            {% endif %}
+            {%- endif %}
             proxy_pass {{ route.api_endpoint['url'] }};
             proxy_ssl_server_name on;
-            proxy_set_header X-Forwarded-Host $Host;
-            proxy_set_header X-Script-Name /drift;
-            proxy_set_header  X-Real-IP  $remote_addr;
-            proxy_set_header  X-Forwarded-For $remote_addr;
+            proxy_set_header X-Forwarded-Host $Host; {# Vital #}
+            proxy_set_header X-Script-Name /drift;   {# Vital #}
+            proxy_set_header  X-Real-IP  $remote_addr; {# Must use this instead of X-Forwarded-For #}
+            {#- proxy_set_header  X-Forwarded-For $remote_addr; #}
         }
         {% endif %}
 
