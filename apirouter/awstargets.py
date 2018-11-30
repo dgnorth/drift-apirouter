@@ -163,10 +163,6 @@ def _healthcheck_targets(api_targets):
                 # Try /
                 url = 'http://{}:{}/'.format(target['private_ip_address'], HEALTHCHECK_PORT)
                 status, message = _check_url(url)
-            if status != 200:
-                # Try /gurko
-                url = 'http://{}:{}/gurko'.format(target['private_ip_address'], HEALTHCHECK_PORT)
-                status, message = _check_url(url)
 
             if status != 200:
                 log.warning(
