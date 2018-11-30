@@ -58,6 +58,10 @@ logto = /var/log/uwsgi/uwsgi.log
 
 ### PGBouncer tuning
 
+Reading material:
+
+[How to Pool PostgreSQL Connections with PgBouncer](https://www.compose.com/articles/how-to-pool-postgresql-connections-with-pgbouncer/)
+
 Installing is straightforward.
 
 ```bash
