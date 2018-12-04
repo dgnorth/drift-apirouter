@@ -122,11 +122,11 @@ http {
 
         # API keys from config:
         {%- for key in conf.table_store.get_table('api-keys').find({'in_use': True}) %}
-        {% if 'product_name' in key %}
+        {%- if 'product_name' in key %}
         {{ key.api_key_name }}  {{ key.product_name }};
-        {% else %}
+        {%- else %}
         {{ key.api_key_name }}  _custom_api_key;
-        {% endif %}
+        {%- endif %}
         {%- endfor %}
     }
 
@@ -282,6 +282,34 @@ http {
             return 503 '{"status_code": 503, "message": "Service Unavailable. {{ route.deployable.reason_inactive }}"}';
         }
     {% elif route.ec2_targets %}
+        {% if 'websocket' in route.deployable_name %}
+        # Temporary fix to route to http and websocket upstream endpoints
+        location /{{ route.api }}/ws {
+            rewrite  ^/{{ route.api }}/(.*) /$1 break;
+            proxy_pass http://{{ name }}-servers;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "Upgrade";
+
+            proxy_set_header Host $Host; {# aiohttp reverse proxy obliviousnessessity #}
+
+            proxy_set_header X-Forwarded-Host $Host; {# Vital #}
+            proxy_set_header X-Script-Name {{ route.api }};   {# Vital #}
+            proxy_set_header  X-Real-IP  $remote_addr; {# Must use this instead of X-Forwarded-For #}
+        }
+
+        location /{{ route.api }} {
+            rewrite  ^/{{ route.api }}/(.*) /$1 break;
+            proxy_pass http://{{ name }}-servers;
+
+            proxy_set_header Host $Host; {# aiohttp reverse proxy obliviousnessessity #}
+
+            proxy_set_header X-Forwarded-Host $Host; {# Vital #}
+            proxy_set_header X-Script-Name {{ route.api }};   {# Vital #}
+            proxy_set_header  X-Real-IP  $remote_addr; {# Must use this instead of X-Forwarded-For #}
+        }
+
+        {% else %}
         location /{{ route.api }} {
             uwsgi_pass {{ name }}-servers;
             uwsgi_param  QUERY_STRING       $query_string;
@@ -302,6 +330,7 @@ http {
 
             uwsgi_param HTTP_X_SCRIPT_NAME  /{{ route.api }};
         }
+        {% endif %}
     {% elif route.api_endpoint %}
         {% if route.api_endpoint['health_status'] == 'error' %}
         location /{{ route.api }} {
@@ -315,7 +344,7 @@ http {
             proxy_pass {{ route.api_endpoint['url'] }};
             proxy_ssl_server_name on;
             proxy_set_header X-Forwarded-Host $Host; {# Vital #}
-            proxy_set_header X-Script-Name /drift;   {# Vital #}
+            proxy_set_header X-Script-Name {{ route.api }};   {# Vital #}
             proxy_set_header  X-Real-IP  $remote_addr; {# Must use this instead of X-Forwarded-For #}
             {#- proxy_set_header  X-Forwarded-For $remote_addr; #}
         }
