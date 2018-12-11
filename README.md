@@ -108,5 +108,22 @@ max_db_connections = 50
 
 ```
 
+https://www.percona.com/live/e17/sites/default/files/slides/High%20Performance%20JSON%20-%20PostgreSQL%20vs.%20MongoDB%20-%20FileId%20-%20115573.pdf
+```
+postgresql.conf:
 
+shared_buffer = 16GB
+max_connections = 400
+fsync = on
+synchronous_commit = on
+full_page_writes = off
+wal_compression = off
+wal_buffers = 16MB
+min_wal_size = 2GB
+max_wal_size = 4GB
+checkpoint_completion_target = 0.9
+work_mem = 33554KB
+maintenance_work_mem = 2GB
+wal_level=replica
+```
 
