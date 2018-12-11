@@ -144,8 +144,9 @@ http {
         default "true";
 
         # The following paths are always keyless:
-        ~*^/api-router(|/.*)$ "false";
-        /healthcheck "false";
+        ~*^/api-router(|/.*)$       "false";
+        /healthcheck                "false";
+        ~*^\/.*\/doc                "false";
 
         # Routes from config:
         {%- for name, route in routes.items() %}
