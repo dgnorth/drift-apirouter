@@ -1,4 +1,4 @@
-/var/log/drift/*.log
+/var/log/nginx/*.log
 {
         missingok
         rotate 1
