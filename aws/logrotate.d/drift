@@ -1,8 +1,9 @@
 /var/log/nginx/*.log
 {
+        size 10M
+        rotate 4
+        compress
         missingok
-        rotate 1
-        size 1000M
         notifempty
         create 0640 www-data adm
         sharedscripts
