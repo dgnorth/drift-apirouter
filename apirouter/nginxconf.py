@@ -189,7 +189,7 @@ def _generate_status(data):
             'api': route['api'],
             'requires_api_key': route['requires_api_key'],
             'is_active': route['deployable']['is_active'],
-            'upstream_servers': [
+            'upstream_servers':
                 [
                     {
                         'address': "{}:{}".format(target['private_ip_address'], target['tags']['api-port']),
@@ -200,7 +200,6 @@ def _generate_status(data):
                     }
                 ]
                 for target in route['ec2_targets']
-            ],
         }
         if not service['is_active'] and 'reason_inactive' in route['deployable']:
             service['reason_inactive'] = route['deployable']['reason_inactive']
